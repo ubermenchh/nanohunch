@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# nanohunch (plan.md Phase 0 step 1): never commit data, weights, checkpoints or reference clones
+/data/
+/runs/
+/refs/
+*.safetensors
+.DS_Store
