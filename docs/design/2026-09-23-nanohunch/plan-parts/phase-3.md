@@ -78,10 +78,17 @@ teacher money is spent.
   `length_buckets`, `risk_coverage`, `baseline`), `README.md`, and `reliability_<qtype>.png` plus
   `reliability_all.png`.
 - CLI: `cli.py eval --config C [--split S] [--predictor {b0,adapter}] [--model M] [--adapter A]
-  [--calibration F] [--data D] [--out-dir O] [--baseline RUN]`. Flags override config keys.
+  [--calibration F|none] [--data D] [--out-dir O] [--baseline RUN] [--reencode]`. Flags override
+  config keys. `--reencode` makes `B0Predictor` call `score_reencode(r)` (bf16 scorer) instead
+  of `score`, for models whose cache cannot be trimmed (Qwen3.5 DeltaNet layers).
   `--predictor` is case-insensitive and accepts `trained` as an alias of `adapter` (Phase 6 and 7
   write `B0` and `trained`). `cli.py fit-cal --adapter PATH|none --split cal --n-perms P --out F
-  [--model M] [--config C]`. `cli.py build --config C [--decode N]`.
+  [--model M] [--config C] [--data D]`; it also writes `cal_items.jsonl` next to `F` (per-item
+  T = 1 probabilities and gold correctness), which the Q4 decision reads. `cli.py build --config C
+  [--decode N]`.
+- `sources/external.norm_hash(text: str) -> str`: `sha256(" ".join(text.lower().split()))`
+  hex digest. This is the one normalisation behind `configs/eval_only_hashes.txt` (step 9a) and
+  every Phase 4 and 6 overlap check.
 - `configs/split.yaml` (frozen salt) and `data/built/eval_v1/{cal,test}.jsonl` with
   `manifest.json` (`split_salt`, `counts` per split and source, `sha256` per file). Phase 4 reuses
   the salt; public-source groups assigned `cal`/`test` here are never trained on.
@@ -119,7 +126,8 @@ teacher money is spent.
      `fit_temperature(log_softmax(2*z), targets)` is in `[1.8, 2.2]`, and ECE (width) of the top-1
      after `log_softmax(2*z/T)` is `< 0.02` and lower than before.
    - `test_bootstrap_self_zero`: `a = np.random.default_rng(1).integers(0, 2, 500)`;
-     `paired_bootstrap(a, a) == (0.0, 0.0, 0.0)`.
+     `paired_bootstrap(a, a) == (0.0, 0.0, 0.0)`, and the same with
+     `groups=np.repeat(np.arange(100), 5)`.
    - `test_flip_rate_identity_zero`: `flip_rate([0,1,2,1],[0,1,2,1]) == 0.0` and
      `flip_rate([0,1],[1,1]) == 0.5`.
    You write, as numbered algorithms: **ece** (1) width: bin index `min(floor(conf*bins), bins-1)`
@@ -128,10 +136,11 @@ teacher money is spent.
    gap)`. **nll**: mean of `-log(max(p[target], 1e-12))`. **brier**: mean over items of `sum_k
    (p_k - onehot_k)^2`. **accuracy**: mean of `argmax(p) == target`. **flip_rate**: share of
    positions where the two top-1 lists differ; raise `ValueError` on unequal lengths.
-   **paired_bootstrap**: (1) `delta = a.mean() - b.mean()`; (2) `rng =
-   np.random.default_rng(seed)`, draw `idx` of shape `(n, len(a))`; (3) `d = a[idx].mean(1) -
-   b[idx].mean(1)`; (4) return `(delta, percentile(d, 2.5), percentile(d, 97.5))` as Python
-   floats. Rerun; expect `5 passed`.
+   **paired_bootstrap** (optional `groups` kwarg): the point estimate is the difference in means.
+   Each resample draws the same indices for `a` and `b` (that is what "paired" means). When
+   `groups` is given, it resamples whole groups rather than items: synthetic decisions come about
+   5 per state, so item resampling gives a CI that is too narrow. Return `(delta, 2.5th pct,
+   97.5th pct)` as Python floats, seeded. Rerun; expect `5 passed`.
 5. (3.0) Eval data, glue. Write `configs/eval_data_v1.yaml`: `split_config: configs/split.yaml`,
    `out: data/built/eval_v1`, `reference_tokenizer: openbmb/MiniCPM5-2B-Base`, and per split and
    source quotas: `cal: {boolq: 550, arc: 550, csqa: 550, hotpot: 350}` (2,000) and `test: {boolq:
@@ -148,9 +157,13 @@ teacher money is spent.
      `no`: state = the 10 context paragraphs joined as `"Title\nText\n\n"`, `noul` question,
      `group_key` = HotpotQA `_id`, `source = "hotpot"`.
    - `hotpot_pad`: for 150 test HotpotQA items per target, append paragraphs from other HotpotQA
-     rows (`random.Random(f"pad|{_id}|{target}")`) until the reference tokenizer count reaches
-     2,048, 4,096 and 8,192. Same `group_key` and `source = "hotpot"` as the base item, so padding
-     never crosses splits; `meta["template"] = f"pad{target}"`.
+     rows (`random.Random(f"pad|{_id}|{target}")`) while the reference-tokenizer count of prefix
+     plus branch stays at or below 1,900, 3,900 and 7,600. That puts each target in `512_2k`,
+     `2k_4k` and `gt4k` respectively, and leaves about 7% headroom under `max_context: 8192` for
+     the Qwen tokenizer. Same `group_key` and `source = "hotpot"` as the base item, so padding
+     never crosses splits; `meta["template"] = f"pad{target}"`; question id
+     `f"{base_id}:pad{target}"` so baseline alignment stays unique; `paired_bootstrap` gets
+     `groups = group_key` because pads are correlated with their base item.
    Every row gets `meta["n_tokens"]` (reference tokenizer, prefix plus branch) and
    `meta["length_bucket"]` from it, so both models are bucketed on identical items. Choice rows
    with >= 3 options get `meta["perm_seed_k"]` for k in 1, 2, 3:
@@ -169,24 +182,29 @@ teacher money is spent.
    `configs/eval_m1.yaml`. `convert_pngwn` maps its types onto `choice`/`noul`/`score`, returns
    `None` for any other type (counted in the README as skipped), fills `consensus` from the
    distribution field if present. If there is no `cal` split, T comes from `eval_v1` cal and the
-   README row says so.
+   README row says so. `eval_v1` cal has no Score items, so if pngwn has Score rows, fit `score:1`
+   on pngwn cal if it exists; otherwise report its Score rows at T = 1 and say so.
 7. (4.0) `evaluate.py`. Write `tests/test_evaluate.py::test_run_eval_toy_predictor`: a fake
    predictor that always puts 0.9 on display position 0 (the first option it is shown); on 10
    3-option Choice items with gold 0 and stored perms, `run_eval` returns
    `overall.acc_gold == 1.0` and `flip.reverse == 1.0` (reversed display shows canonical option 2
    first, so the remapped top-1 is 2, not 0), and writes
-   `metrics.json` and `items.jsonl`. You write `run_eval`: (1) for each item call
+   `metrics.json` and `items.jsonl`. At least 2 items store `perm_seed_1 = "1,2,0"`, and for every
+   `perm_seed_k` entry `items.jsonl` has `flip_top1 == perm[0]`. An inverted remap returns `2`
+   instead of `1` for `(1, 2, 0)`; a reversal cannot catch that. You write `run_eval`: (1) for each item call
    `pred.predict(state, [q], n_perms=1)`; (2) correctness vs `gold` and, separately, vs
    `argmax(consensus)` where not `None`; (3) per qtype and overall: `accuracy`, `ece` width and
-   mass with 15 bins on T-scaled confidence plus width ECE at T = 1, `nll`, `brier`; (4) for each
+   mass with 15 bins, `nll`, `brier`, on whatever the predictor returns (T-scaled when it was built
+   with a calibration). The T = 1 ECE comes from a second run with `--calibration none`, and
+   `README.md` shows the two runs side by side; (4) for each
    `flip_suite` entry build the permuted `Question` (options reordered so display j is
    `options[perm[j]]`), predict, map top-1 back with `perm[display_top1]`, then `flip_rate`
    against step 1; (5) accuracy per `length_bucket`; (5b) ECE per option-count bucket `2`, `3-5`, `6+` on T-scaled confidence; (6) `_risk_coverage_table` at `coverages`;
    (7) if `baseline` is set, load `out_dir.parent / baseline / "items.jsonl"`, align on
    `(state_id, question_id)`, raise `ValueError(f"baseline {baseline} missing {k} items")` if any
-   are absent, and store `paired_bootstrap` on gold correctness. Glue: reliability PNGs
-   (matplotlib, 15 equal-width bins), `README.md` tables. Run `uv run pytest -q`; expect `25
-   passed` (Phase 2's 15 plus 10 new).
+   are absent, and store `paired_bootstrap` on gold correctness with `groups` = each item's
+   `group_key`. Glue: reliability PNGs (matplotlib, 15 equal-width bins), `README.md` tables. Run
+   `uv run pytest -q`; expect `37 passed` (27 from Phases 0 to 2 plus 10 new).
 8. (1.0) `cli.py` glue and `configs/eval_m1.yaml`:
    ```yaml
    eval:
@@ -201,7 +219,9 @@ teacher money is spent.
    ```
    `fit-cal` runs the predictor with T = 1 on `cal`, calls `fit_temperature` per qtype, writes a
    `Calibration` with keys `f"{qtype}:{n_perms}"`, `model_revision` = HF snapshot hash, `fitted_on
-   = "eval_v1/cal@" + sha256[:12]`. Crosscheck: `uv run python cli.py eval --predictor b0 --data
+   = "eval_v1/cal@" + sha256[:12]`. It exits 1, naming the key, if any fitted T is within 1% of
+   0.05 or 20: a T on the search bound is a bug, not a result (AGENTS.md Rule 6.4). Crosscheck:
+   `uv run python cli.py eval --config configs/eval_m1.yaml --predictor b0 --data
    data/skeleton/gold_eval.jsonl --out-dir reports/m1/crosscheck`; per-type accuracy within 0.5 pt
    of `reports/phase2.json` `b0_engine`.
 9. (2.0 attended, about 4 h wall clock) Bake-off, test numbers from here on:
@@ -212,16 +232,17 @@ teacher money is spent.
    reports/m1/minicpm5_b0` (about 45 min). Repeat both for `Qwen/Qwen3-4B-Base` into
    `runs/b0_qwen3_4b/calibration.json` and `reports/m1/qwen3_4b_b0` with `--baseline minicpm5_b0`
    (about 90 min). **Required** `Qwen/Qwen3.5-4B-Base` row into `reports/m1/qwen35_4b_b0`: this is the SemIf method
-   (frozen Qwen3.5-4B, direct letter logits) run in our harness, and Phase 6 compares against it.
-   Hybrid DeltaNet layers do not trim, so run it with `score_reencode(r, dtype="bfloat16")` (full
-   re-encode per question, no branching, about 40 min on the test split; inference uses the fast
-   Metal kernel). Report its latency as re-encode latency, not engine latency, and never train it.
+   (frozen Qwen3.5-4B, direct letter logits) run in our harness, and Phase 6 compares against it
+   (R21; ADR-0001 Amendment 2 records why this zero-train row became required). Hybrid DeltaNet
+   layers do not trim, so pass `--reencode` (full re-encode per question, no branching, about
+   40 min on the test split; inference uses the fast Metal kernel). First redo the Phase 2 step 6
+   check for its model type: the `_backbone` and head fields assume a Llama-shaped model. Report its latency as re-encode latency, not engine latency, and never train it.
    Also score it on SemIf authored144 (step 9a): it should land within 5 pts of SemIf's 0.813. pngwn pass: `--data` pointed at
    the converted test split, out `reports/m1/minicpm5_b0_pngwn`, aggregates only.
 9a. (3.0) External anchors, glue plus one run each. These make M1 comparable with work other people already published.
     - **SemIf authored144** (MIT, `refs/semif/benchmarks/data/authored144.jsonl`). You write `convert_semif` in `sources/external.py` (print the first row's keys first and map them). Score it with SemIf's metric, **mean family balanced accuracy**, which you add to `evaluate.py` as `family_balanced_accuracy(items, correct) -> float` (mean over task families of per-family balanced accuracy). SemIf published native-BF16 values (`refs/semif/docs/RESULTS.md`): MiniCPM5-2B **0.686**, Qwen3.5-4B **0.813**, Qwen3-0.6B 0.440. Run MiniCPM5-2B B0 and write `reports/m1/semif_authored/`.
     - **JevBench public items** (MIT, `refs/jevbench/datasets/public/{easy,original,hard}.jsonl`). You write `convert_jevbench` (print keys first). Report accuracy and hard-tier ECE only, per file, and label them "JevBench public items, self-run, not an official JevBench score": the official score also covers sealed items, speed and cost.
-    - **Eval-only rule:** both sets are written to `configs/eval_only_hashes.txt` (normalized-text sha256 of every state and question) so Phase 4 can exclude overlaps from training (JevBench's own README warns its public half can be trained on or selected against).
+    - **Eval-only rule:** both sets are written to `configs/eval_only_hashes.txt` (`norm_hash` of every state and question) so Phase 4 can exclude overlaps from training (JevBench's own README warns its public half can be trained on or selected against).
 10. (0.5) Latency: `uv run python -m bench.latency_p2 --model <id> --out reports/m1/latency.md`
     for each model; W0/W1/W2 as defined in Phase 2.
 11. (2.0) Write `reports/m1/README.md`: headline table next to pngwn arm B (accuracy 0.752, ECE
@@ -234,7 +255,7 @@ teacher money is spent.
 12. (1.25) Interruption buffer; log hours in `ledger/hours.csv`.
 
 **Verification gate**
-- `uv run pytest -q` passes, 25 tests.
+- `uv run pytest -q` passes, 37 tests.
 - `uv run python cli.py build --config configs/eval_data_v1.yaml` twice gives identical `sha256`
   values in `data/built/eval_v1/manifest.json`.
 - Crosscheck in step 8 within 0.5 pt of Phase 2 per type.
@@ -257,15 +278,20 @@ teacher money is spent.
   reshuffling.
 
 **Kill criterion and decisions**
-- **Q4 (base choice):** if Qwen3-4B B0 test gold accuracy exceeds MiniCPM5 B0 by more than 3 pts
+- **Q4 (base choice), decided on cal, not test (ADR-0001):** if Qwen3-4B B0 **cal** gold accuracy
+  (T = 1, from the two `fit-cal` runs' `cal_items.jsonl`) exceeds MiniCPM5 B0 by more than 3 pts
   (paired `delta > 0.03`), the "Qwen3-4B training on a rented GPU" later item moves forward and
   Phases 5 to 6 are re-sequenced for it; otherwise MiniCPM5-2B-Base stays the MVP base. Record the
-  result in ADR-0001. Prior (published, not ours): on authored144 SemIf measured frozen
+  result in ADR-0001. The test-split bake-off numbers are published, but they never choose the base. Prior (published, not ours): on authored144 SemIf measured frozen
   Qwen3.5-4B 12.7 pts above frozen MiniCPM5-2B, so expect this rule to fire; the Modal item is
   already costed in `cost.md` (about 16 USD per extra base model).
-- **Calibration grouping:** if ECE on cal differs by more than 0.03 between option-count buckets,
-  change `Calibration.temperature` keys to `f"{qtype}:{n_perms}:{bucket}"` (MiniSystemOne and
-  poorjev both found a global T does not transfer across option counts).
+- **Calibration grouping:** run `cli.py eval --split cal` once with the fitted calibration, then
+  compare option-count buckets **within a qtype** (bucket `2` is only Noul, so comparing across
+  buckets would really compare types). If two buckets of the same qtype differ by more than 0.03
+  ECE, change `Calibration.temperature` keys to `f"{qtype}:{n_perms}:{bucket}"` (MiniSystemOne and
+  poorjev both found a global T does not transfer across option counts). All `eval_v1` Choice
+  items fall in `3-5`, so this rule cannot fire on M1 data; re-check it in Phase 6 step 15 once
+  v2 adds Choice items with 6 to 8 options.
 - **R13 tripwire (A12):** if the chosen base's B0 `flip.reverse` on Choice test items exceeds 30%,
   P = 2 reversed pooling and T per `(qtype, 2)` move from "Not doing" into Phase 6.
 - **Kill (ADR-0002):** if MiniCPM5 B0 is below the R6 floors on test after 3 h of readout

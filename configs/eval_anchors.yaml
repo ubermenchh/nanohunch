@@ -1,0 +1,8 @@
+# External anchors have no project-specific permutation metadata, so score canonical order only.
+eval:
+  data: {cal: data/built/eval_v1/cal.jsonl, test: data/built/eval_v1/test.jsonl}
+  bins: 15
+  flip_suite: []
+  length_edges: [512, 2048, 4096]
+  coverages: [1.0, 0.9, 0.8, 0.7, 0.5]
+  max_context: 8192

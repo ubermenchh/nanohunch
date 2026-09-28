@@ -1,6 +1,6 @@
 # ADR 0001: Train and release a plain full-attention base (Qwen3 ladder), not the Qwen3.5 hybrid
 
-**Status:** proposed (confirm after Phase 0 measurements M3, M4, M5 in `architecture.md` section 5)
+**Status:** accepted as amended. The MVP base is MiniCPM5-2B-Base (Amendment 1); the Phase 3 cal-split bake-off confirms it or promotes Qwen3-4B-Base. The "Decision" section below is the original text; the amendments override it.
 **Date:** 2026-09-23
 **Door:** one-way (expensive to reverse)
 **Deciders:** @umang (author), sd-architect
@@ -89,3 +89,23 @@ member changes for the MVP:
   decisions (about 1.3 h on the Mac, DERIVED).
 - Qwen3.5-4B stays only as an optional zero-train B0 reference row in the
   bake-off (inference path uses the fast Metal kernel).
+
+## Amendment 2 (2026-09-24, revision 2; see `risks.md` R21)
+
+- The Qwen3.5-4B zero-train row becomes **required** in Milestone 1. It is
+  the SemIf method (frozen Qwen3.5-4B, direct letter logits) run in our harness,
+  and the Phase 6 open-replication table compares against it. It is scored by
+  full re-encode (`cli.py eval --reencode`), because DeltaNet state does not
+  trim. It is still **never trained**, so the family decision stands.
+- The bake-off decision (Qwen3-4B-Base vs MiniCPM5-2B-Base, the > 3 pt rule)
+  is made on **cal** B0 accuracy, as in "Verification" above. Test numbers are
+  published but never choose the base.
+
+## Amendment 3 (2026-09-28, user decision after Phase 3 Q4)
+
+- **MVP training base: Qwen3-4B-Base.** The aligned cal-only comparison at
+  T=1 scored MiniCPM5-2B-Base at 0.6295 and Qwen3-4B-Base at 0.8150; the
+  paired group-bootstrap delta is +0.1855 (95% CI +0.1581 to +0.2133), above
+  the pre-registered +0.03 trigger. The user chose to move ahead with the
+  Qwen3-4B route, so training is planned on the costed Modal path. The
+  Phase 5 learning-curve gate still decides whether Phase 6 proceeds.

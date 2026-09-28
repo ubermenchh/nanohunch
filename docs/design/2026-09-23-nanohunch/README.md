@@ -17,8 +17,8 @@ simplest readout, not on a clever head. Build **MiniCPM5-2B-Base, read through
 restricted label-token logits, LoRA-tuned in MLX on the M5 on soft labels from
 two releasable teachers**, served by a hand-written engine that encodes the
 state once and branches the KV cache per question. Expected cash is **5 to 15
-USD** of the 200 USD cap. The binding constraint is time, **about 160 hours**,
-not money. Since about ten open replications appeared the week after Jev
+USD** of the 200 USD cap. The binding constraint is time, **about 160 hours** of work
+(about 57 of them yours under the jarvis contract), not money. Since about ten open replications appeared the week after Jev
 launched, the claim is **minimal**, not "first" or "best". The core is six
 hand-written files of at most 1,000 lines, trained overnight on one Mac, and
 measured in one harness against SemIf (frozen Qwen3.5-4B), decider-2b (a
@@ -120,8 +120,9 @@ question as a short branch ending in `Answer:` (format `nanohunch-fmt-v1`,
 ADR-0003). The engine prefills the state once in 1k-token chunks, then for
 each question runs only the branch tokens on the cached state and trims the
 cache back. At the last position it multiplies the hidden state by **only the
-LM-head rows of the label tokens** (` A`..` Z` for Choice, ` 0`..` 9` for
-Score, ` yes`/` no` for Noul), applies softmax and then a per-type
+LM-head rows of the label tokens** (` A`..` Z` for Choice, values 0..9 for
+Score with the label scheme of ADR-0003 Amendment 1, since ` 0`..` 9` are two
+tokens on MiniCPM5, ` yes`/` no` for Noul), applies softmax and then a per-type
 temperature (ADR-0002). Training uses that exact same function as its loss
 (soft cross-entropy against teacher distributions), with option order
 reshuffled every epoch and targets remapped by option id. Measured on real
@@ -170,7 +171,7 @@ There is no uptime SLO. The failures that matter are **silently wrong
 numbers**. The guards:
 - Labels keyed by option id, a permutation property test, and 20 decoded rows
   read by hand for every dataset build (R6).
-- An fp32 unbatched branch oracle, plus isolation diff == 0 (R8).
+- An fp32 unbatched branch oracle on the CPU backend, plus isolation diff == 0 (R8; P0-4).
 - Batch size 1 until the unexplained 0.12 fp32 MLX batched gap is explained (R9).
 - Trainer-vs-engine NLL parity, an "adapter actually applied" assert, and
   overfit-32 through the engine before any overnight run (R3, R9).
@@ -205,7 +206,7 @@ OpenRouter is prepaid in steps of at most 20 USD, with auto top-up off.
 
 ## 11. Rollout: the plan
 
-`plan.md` has 8 phases totalling about 160 h. Each phase has a "why", the
+`plan.md` has 8 phases totalling about 160 h of work. Under the jarvis contract (revision 3) the agent does the tests, glue and runs, so your hands-on share is about 57 h; the step checklist is `.jarvis/PROGRESS.md`. Each phase has a "why", the
 concepts you will understand, interfaces, tests first, a verification gate, a
 rollback and kill criteria.
 
@@ -239,7 +240,7 @@ end of week 9, publish B0 and a write-up, then stop.
 
 - ADR-0001: plain-attention base family; amended so MiniCPM5-2B is the MVP default.
 - ADR-0002: restricted label-logit readout on a frozen LM head.
-- ADR-0003: prompt serialization `nanohunch-fmt-v1` (frozen at the end of Phase 2).
+- ADR-0003: prompt serialization `nanohunch-fmt-v1` (frozen at the end of Phase 2); Amendment 1 (Score labels) decided at P0-1.
 - ADR-0004: training-data licence and teacher policy.
 - Also one-way: the split salt (frozen at Milestone 1) and the public release (Phase 7).
 

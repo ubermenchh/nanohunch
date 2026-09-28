@@ -1,0 +1,5 @@
+# Frozen split (plan Phase 3 step 1). ONE-WAY DOOR once Milestone 1 test numbers are published:
+# changing the salt reshuffles test and makes every earlier number incomparable. Commit this file
+# before any test number exists, so its timestamp proves the order of events.
+salt: nanohunch-v1-df230b7a677078261e06f841c661f664
+fractions: {train: 0.80, cal: 0.08, test: 0.12}  # order matters: assign_split walks it cumulatively

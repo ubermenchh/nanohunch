@@ -1,6 +1,6 @@
 # ADR 0004: Released model and dataset use only redistributable data and open-weight teacher labels
 
-**Status:** proposed (confirm the open-weight teacher's licence at selection)
+**Status:** accepted as amended (Amendment 2 supersedes Amendment 1's teacher list)
 **Date:** 2026-09-23
 **Door:** one-way (expensive to reverse)
 **Deciders:** @umang (author), sd-architect
@@ -57,3 +57,38 @@ CC-BY-SA for the ticket component.
 A build step fails if any training row's `source.license` is not in the allow
 list or any teacher label comes from a non-allowlisted teacher. Checked before
 every training run and before publishing.
+
+## Amendment 1 (2026-09-24, aligns this ADR with `risks.md` R4, R16 and R22)
+
+- Bulk labels come from two teachers via OpenRouter logprobs, with no GPU line:
+  **DeepSeek V4.1 Flash** (API; ToS 4.2(3) permits training on and
+  distributing outputs if published outputs are marked AI-generated; confirm
+  under Q6 before bulk labelling, else remove it from `RELEASABLE_TEACHERS`)
+  and **Qwen3.6-35B-A3B** (Apache-2.0 open weights, served by an OpenRouter
+  host). This is the "terms are read and allow it" case of the Decision above.
+- OpenAI, Anthropic and Jev outputs never touch training, selection,
+  calibration or published labels.
+- Eval-only, never trained on: ANLI and all pngwn artefacts (NC treatment),
+  SemIf authored144 and JevBench public items (R22, excluded by
+  `configs/eval_only_hashes.txt`).
+
+## Amendment 2 (2026-09-25, Phase 0 gate; supersedes Amendment 1's teacher list)
+
+The author has no OpenRouter account, so the API teachers are dropped. Bulk labels and the
+synthetic-state generator run **open-weight models locally in MLX**, which is this ADR's original
+decision:
+
+- **Teachers:** `lmstudio-community/gemma-4-26B-A4B-it-QAT-MLX-4bit` (Apache-2.0) and
+  `unsloth/Qwen3.6-35B-A3B-UD-MLX-3bit` (Apache-2.0). Two model families, which reduces
+  correlated teacher error (R11). `RELEASABLE_TEACHERS = {"gemma-4-26b-a4b", "qwen3.6-35b-a3b"}`.
+- **Readout:** full-vocabulary softmax at the answer position, summed over single-id spellings of
+  each label, then renormalized. This is exact, with no top-20 truncation. Measured on 50 items:
+  candidate mass >= 0.997 for both (`reports/phase0.md` P0-7').
+- **Closed APIs** (Anthropic, OpenAI, Gemini, Jev): eval-only reference rows at most. Checked
+  2026-09-24: the Gemini API terms forbid using the service to develop competing models and forbid
+  extracting or replicating its models, which is not an explicit permission to distill.
+- **Q6** (DeepSeek terms) is moot. No API spend is planned for labels.
+- **Consequence for the plan:** `label.py` becomes a local MLX teacher runner with the same cache
+  contract (one JSONL line per call, allowlisted fields, run date recorded) instead of HTTP glue.
+  Each teacher labels a dataset in one pass: same-day reruns are bit-identical, but a 0.025 drift
+  against a 12-hour-old run was observed with an identical prompt (cause unknown).

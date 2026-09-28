@@ -1,0 +1,11 @@
+# Same eval config as eval_m1.yaml, for external anchor rows (SemIf, JevBench).
+# flip_suite is empty: convert_semif/convert_jevbench never generate perm_seed_1/2/3
+# (those permutation seeds are only built for eval_v1 itself, Phase 3.4), and plan
+# Phase 3 step 9a does not ask for flip stats on these anchors.
+eval:
+  data: {cal: data/built/eval_v1/cal.jsonl, test: data/built/eval_v1/test.jsonl}
+  bins: 15
+  flip_suite: []
+  length_edges: [512, 2048, 4096]
+  coverages: [1.0, 0.9, 0.8, 0.7, 0.5]
+  max_context: 8192

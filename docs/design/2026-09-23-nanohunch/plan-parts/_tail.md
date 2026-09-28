@@ -7,7 +7,7 @@ deleted. Anything added to the core from this list must still fit the
 
 | Item | Status | Trigger to add |
 |---|---|---|
-| Qwen3-4B training on a rented GPU (one Modal function, Volume checkpoints, `timeout=`) | later | Qwen3-4B B0 beats MiniCPM5-2B B0 by > 3 pts in Phase 3 (SemIf's published gap suggests it will), or a Mac epoch exceeds one night twice |
+| Qwen3-4B training on a rented GPU (one Modal function, Volume checkpoints, `timeout=`) | later | Qwen3-4B B0 beats MiniCPM5-2B B0 by > 3 pts on cal in Phase 3 (SemIf's published gap suggests it will), a Mac epoch cannot be cut to one night (R7), or two overnight runs fail (R18) |
 | HTTP `/v1/decide` server, Gradio demo, ZeroGPU Space | later | the release wants a live demo (after Phase 7) |
 | Inference permutation pooling P = 2 and T per (type, P) | later | B0 flip rate > 30% in Phase 3, or trained top-1 agreement < 0.90 in Phase 6 |
 | Order-invariant option masks (von `option_marker.py`: options cannot attend to each other, positions reset) | later, stretch | P = 2 pooling still leaves top-1 agreement < 0.90; it changes the format, so it is a v2 format (new ADR) |
@@ -38,6 +38,7 @@ deleted. Anything added to the core from this list must still fit the
 | Q8 | Does decider-2b's own inference code run on Apple Silicon (MPS) within about 30 min for our test set? It reports 133 ms per request on an M1 Pro | Phase 6 step 16a smoke test | week 8 | decider row; fallback is a one-off Modal run (about 1 USD) or dropping the row with a note |
 | Q9 | Are the SemIf authored144 and JevBench public item schemas stable at the pinned commits? | Phase 3 step 9a (print keys first) | week 4 | external anchors |
 | Q10 | Does our core fit in 1,000 lines once Phase 6 adds `bootstrap_ci` and `risk_coverage`? | `tools/loc.py` at each gate | every phase | if not, cut features before raising the budget |
+| Q11 | Which Score label scheme replaces ` 0`..` 9`, given they are two tokens on MiniCPM5 (MEASURED 2026-09-24)? | author, P0-1 (Phase 0 step 5; ladder step 0003), recorded in ADR-0003 Amendment 1 | end of week 1 | Phase 2 format freeze, every Score item |
 
 ## Assumption validation map
 
@@ -59,34 +60,36 @@ Assumption ids are from `_brief/requirements.md` (ledger), plus R-numbers from `
 
 ## How to use this plan with an AI pair
 
-Your convention (`rl-wordle/AGENTS.md`) is that you write the core and the
-agent pairs. Copy that rule into this repo's `AGENTS.md` in Phase 0.
+Since revision 3 the agent works under the **jarvis** contract (`AGENTS.md` Rule 1,
+ownership map in `.jarvis/PROJECT.md`). The rule of thumb: if typing it involves a decision or
+teaches something about the problem, it is yours; if it is ceremony, it is the agent's.
 
-**You write:**
-- the six core files: `fmt.py`, `engine.py`, `calibrate.py`, `train.py`,
-  `dataset.py`, `evaluate.py`;
-- `sample_spec` and `spec_questions` in `sources/triage.py`, because they define
-  ground truth.
+**You type (from hand-offs), and the agent never edits:**
+- the six core files: `fmt.py`, `engine.py`, `calibrate.py`, `train.py`, `dataset.py`,
+  `evaluate.py`;
+- `sources/triage.py` (`sample_spec`, `spec_questions`, workflow rules), because they define
+  ground truth;
+- `skeleton/b0_reader.py`.
 
-**Ask the agent for:**
-- reviewing your diff against the phase's interface and tests;
-- explaining an MLX or tokenizer behaviour you do not understand;
-- walking through a file in `refs/` with you;
-- writing glue in `sources/`, `label.py`, `cli.py`, `tools/`;
-- proposing extra test cases;
-- debugging a failing gate by reading logs;
-- suggesting deletions when `tools/loc.py` says you are over budget.
+**You decide or do by hand:** the decisions in `.jarvis/PROGRESS.md` "Pending decisions", the
+blind audits, reading decoded rows, pre-registrations, report and model-card prose, `.env`,
+and every push, tag and visibility flip.
 
-A good prompt: "Here is my `fmt.render`. The test
-`test_prefix_identical_across_questions` fails with <output>. Do not fix it;
-tell me where my reasoning is wrong."
+**The agent writes and runs:** scaffolding, dependencies, config, all tests and gates, glue,
+reference scripts, report tables and plots, downloads, labelling, training and eval runs.
 
-**Do not ask the agent for:**
-- the body of any core function;
-- a port of a reference repo's code into your core.
+**The build loop for each of your steps:**
+1. The agent writes the tests and shows them red for the right reason.
+2. It hands over the code to type: exact location, at most ~40 lines, "Why" bullets, and the
+   check command.
+3. You type it and say "done".
+4. The agent runs the tests and reads your diff. It names typos and real bugs at `file:line`
+   and hands over the fix to type; it does not edit your file.
 
-The stock tools in `skeleton/` are the one exception to the first rule: they
-exist so your own code has a number to match.
+**Variants:**
+- Say **"hints only"** for any step to get the task and tests, then hints one rung at a time.
+- Say **"jarvis, just write this one"** to delegate a single piece. It gets logged under
+  "Jarvis-written" so the record stays honest.
 
 ## Re-assembling this file
 

@@ -1,0 +1,3 @@
+# Phase 1 stock LoRA (plan Phase 1 step 7): settings that are not CLI flags.
+lora_parameters: {rank: 16, scale: 20.0, dropout: 0.0}
+seed: 0

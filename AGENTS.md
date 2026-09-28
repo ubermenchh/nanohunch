@@ -8,41 +8,46 @@ probability distributions instead of text. Restricted label-token logits, KV-cac
 LoRA, and temperature scaling, all written by hand in MLX on an Apple Silicon Mac.
 
 - Design and rationale: `docs/design/2026-09-23-nanohunch/README.md`
-- Build sequence: `docs/design/2026-09-23-nanohunch/plan.md`
+- Design reference (gates, kill criteria, commands): `docs/design/2026-09-23-nanohunch/plan.md`
 - Risk dispositions: `docs/design/2026-09-23-nanohunch/risks.md` (it settles contradictions)
+- **Executable step list and session memory: `.jarvis/PROGRESS.md`, `.jarvis/PROJECT.md`**
+  (read both at the start of every session)
 
-**The user is writing this code, not you.** The learning is the deliverable. Code you write for
-them is code they did not learn from.
+**The user types the core, not you.** The learning is the deliverable. Everything that is
+ceremony, you do, so the user's hours go into the core.
 
 ---
 
-## Rule 1: Operate as `pair` by default
+## Rule 1: Operate as `jarvis`
 
-Load and follow the `pair` skill for all work in this project.
+Load and follow the `jarvis` skill for all work in this project (since 2026-09-24; it replaced
+`pair` as the default).
 
-- Do not modify files or run state-changing commands (no edits, no `git add/commit/push`, no
-  installs, no formatters in write mode).
-- Read-only inspection is encouraged: reading files, `git status/diff/log`, running tests,
-  linters in check mode, `uv run python tools/loc.py`.
-- When you have a fix, tell the user exactly what to change (location, minimal diff, one-line
-  reason) and let them type it.
+- **You write and run, without a hand-off:** scaffolding, dependencies, config, every test
+  file (`tests/**`, `gates/**`), `bench/`, `tools/`, `cli.py`, `label.py`, `sources/public.py`,
+  `sources/external.py`, `release.py`, `configs/`, `prompts/`, `skeleton/` except
+  `b0_reader.py`, report tables and plots, `.jarvis/`, and every run (downloads, labelling,
+  training, evals). The full map is `.jarvis/PROJECT.md` "Ownership".
+- **Never edit a user-owned file** (Rule 2), not even a one-character typo. Point at `file:line`
+  and hand over the fix to type.
+- **Build loop:** write the tests, show them red for the right reason, hand over full code
+  (at most ~40 lines, exact location, "Why" bullets, the check command), stop, then on "done"
+  run the tests, read the diff, and update `.jarvis/PROGRESS.md`.
+- **Hint-first on request:** if the user says "hints only" for a step, give the task and the
+  tests, then hints one rung at a time instead of code.
+- **Escape hatch:** "jarvis, just write this one" for a named piece: write only that piece and
+  log it under "Jarvis-written" in `.jarvis/PROGRESS.md`.
+- Do not `git commit` or `git push` unless asked; publishing is the user's.
 
-**Escape hatch:** the user may explicitly ask for glue to be written (see Rule 2) or for the
-design docs to be updated. That is a deliberate switch, not the default.
+## Rule 2: The core is the user's
 
-## Rule 2: Never write the core
-
-The six core files are the point of the project:
+User-owned, typed by the user from hand-offs:
 
 `fmt.py`, `engine.py`, `calibrate.py`, `train.py`, `dataset.py`, `evaluate.py`,
-plus `sample_spec` and `spec_questions` in `sources/triage.py`.
+`sources/triage.py` (`sample_spec`, `spec_questions`, workflow rules), `skeleton/b0_reader.py`.
 
-For these: explain the idea, point at the plan section, describe tensor shapes, sketch
-pseudocode in chat clearly marked as pseudocode. Do not hand over a working implementation,
-even if asked casually.
-
-Glue may be agent-written when the user asks: `sources/` adapters, `label.py` (HTTP), `cli.py`,
-`release.py`, `tools/`, plotting, `skeleton/` and `bench/` (stock-tool reference scripts).
+Hand-offs for these are complete and runnable, each turning named tests green. Never port a
+reference repo's code into a hand-off (Rule 3); write it from the design.
 
 ## Rule 3: Reference repos are for reading
 
@@ -87,7 +92,8 @@ remind them of the rule and what it protects against. The decision is theirs; ma
 ## Rule 8: Secrets and licences
 
 - Never print, log or commit the contents of `.env`. Pre-push check:
-  `git grep -nE "sk-or-v1-|hf_[A-Za-z0-9]{30,}"` must print nothing.
+  `git grep -nE "sk-or-v1-[A-Za-z0-9]{32,}|hf_[A-Za-z0-9]{30,}"` must print nothing. (The
+  key-shaped tail keeps the pattern from matching docs that quote it.)
 - Never suggest training on outputs from OpenAI, Anthropic or Jev, or on NC-licensed data
   (ANLI, pngwn artefacts). Those are eval-only at most (ADR-0004).
 - SemIf authored144 and JevBench public items are eval-only; they must never enter training

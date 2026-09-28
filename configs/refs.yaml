@@ -1,0 +1,16 @@
+# Reference repos for reading only (AGENTS.md Rule 3; plan Phase 0 step 14). Never import from refs/.
+# Fetched as GitHub source archives at the pinned commit into refs/<name>/ (gitignored).
+# If a line of core code is materially adapted, comment it `# adapted from <repo>@<sha>:<path>`.
+refs:
+  - {name: semif, repo: TheoLeeCJ/SemIf-OpenJev, sha: 23cf1f39fc95, license: MIT,
+     read_for: "zero-shot baseline, MLX cache copy, authored144 eval data"}
+  - {name: decider, repo: Mapika/decider, sha: b44b4c9880a6, license: Apache-2.0,
+     read_for: "trained letter-slot readout; external trained baseline"}
+  - {name: reflex, repo: kshetrajna12/reflex, sha: 231f896d818a, license: MIT,
+     read_for: "proper-score LoRA loss on restricted logits"}
+  - {name: von, repo: wfzyx/von, sha: 1d86116dcc76, license: Apache-2.0,
+     read_for: "order-invariant option masks (later list only)"}
+  - {name: minisystemone, repo: Colvin0315/MiniSystemOne, sha: 016c6dd0c36a, license: Apache-2.0,
+     read_for: "per-group temperature fitting"}
+  - {name: jevbench, repo: fstandhartinger/jevbench, sha: 2fa63fa3226c, license: MIT,
+     read_for: "public eval items, scoring conventions"}

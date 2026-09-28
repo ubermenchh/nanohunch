@@ -1,0 +1,15 @@
+# Eval paths and suites are shared by all B0 rows so differences stay paired.
+eval:
+  data: {cal: data/built/eval_v1/cal.jsonl, test: data/built/eval_v1/test.jsonl}
+  bins: 15
+  flip_suite: [reverse, perm_seed_1, perm_seed_2, perm_seed_3]
+  length_edges: [512, 2048, 4096]
+  coverages: [1.0, 0.9, 0.8, 0.7, 0.5]
+  max_context: 8192
+external:
+  pngwn_test:
+    path: data/raw/pngwn/typed-decisions-v2
+    split: test
+    cal_split: cal
+    publish: aggregate_only
+    fields: {}

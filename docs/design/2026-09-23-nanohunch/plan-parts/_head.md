@@ -7,6 +7,9 @@ Scope: the MVP cut line in `risks-overengineering.md` section 4, adjusted by
 `risks.md`. Anything not in this file is on the "Not doing" list at the end.
 Revision 2 (2026-09-24): minimal layout with a 1,000-line core budget, open
 replications as reference reading and baselines (see "What changed in revision 2").
+Revision 3 (2026-09-24): execution follows the jarvis contract. The step-by-step checklist
+is `.jarvis/PROGRESS.md`; this file stays the reference for gates, commands and kill criteria
+(see "What changed in revision 3").
 
 ## Summary
 
@@ -52,6 +55,20 @@ model), all in one harness.
 | Phase 6 adds decider-2b as an external trained baseline and an open-replication table | A reader's first question will be "how does this compare to the others?" |
 | Phase 3 adds a calibration-grouping rule (T per option-count bucket if needed) | MiniSystemOne and poorjev both found that a single global T does not transfer across option counts |
 
+## What changed in revision 3
+
+| Change | Why |
+|---|---|
+| Every test file (`tests/**`, `gates/**`) is written and run by the agent (jarvis) | tests are specification, not the learning; writing them cost many of the old ~160 h |
+| Scaffolding, glue (`sources/public.py`, `sources/external.py`, `label.py`, `cli.py`, `release.py`, `tools/`, `bench/`, most of `skeleton/`) and all runs are the agent's | ceremony; removing it is what brings your hands-on time to about 57 h |
+| Core code arrives as **full-code hand-offs** of at most ~40 lines, each turning named tests green; you type every line | you still write the whole core; say "hints only" on any step for the old interface-plus-algorithm mode |
+| `skeleton/b0_reader.py` is yours (about 35 lines) | first contact with the label readout |
+| `.jarvis/PROGRESS.md` is the executable checklist; `(Pn sk)` there points back here | one list of `[jarvis]` / `[you]` steps instead of reading 2,000 lines per session |
+
+Unchanged: phases, gates, kill criteria, calendar rules, budgets, the 1,000-line core limit.
+Wherever a phase below says "write the failing tests", the agent does it; wherever it says
+"you write", you type the hand-off.
+
 ## How to read this plan
 
 Every phase opens with **Why this phase exists** and **What you will
@@ -61,10 +78,10 @@ interfaces the phase produces for later phases, the steps (tests first), a
 verification gate with a command and an expected result, a rollback, and where
 relevant a kill criterion.
 
-Core logic is **yours to write** (see "How to use this plan with an AI pair").
-For core components the plan gives the interface, the algorithm as numbered
-steps, and the exact tests with assertions, but never the implementation.
-Glue (config, HTTP, file IO) is spelled out concretely.
+Core logic is **yours to type** (see "How to use this plan with an AI pair").
+The plan gives each core component's interface, the algorithm as numbered steps
+and the tests that define it; during the build the agent turns that into
+full-code hand-offs (revision 3). Glue (config, HTTP, file IO) is the agent's.
 
 ## Sequence at a glance
 
@@ -90,7 +107,7 @@ gantt
   dateFormat  YYYY-MM-DD
   axisFormat  w%W
   section Measure and skeleton
-  P0 setup, refs, measure       :p0, 2026-09-28, 7d
+  P0 setup, refs, measure       :p0, 2026-09-24, 7d
   P1 walking skeleton           :p1, after p0, 7d
   section Inference core
   P2 hand-written core          :p2, after p1, 7d
@@ -150,7 +167,8 @@ nanohunch/
   skeleton/         Phase 1 stock-tool reference scripts (kept forever as the numeric reference)
   bench/            Phase 0 measurement scripts (copied from docs/design/.../capacity-bench)
   refs/             gitignored: six pinned reference repos, reading only (configs/refs.yaml)
-  tests/            pytest, one file per concern
+  tests/            pytest, one file per concern (`testpaths`; plain `uv run pytest -q` runs these)
+  gates/            Phase 5 gate tests run by explicit path only (overfit-32, numerics gate)
   configs/          YAML run configs, committed
   prompts/          generator prompts
   data/  runs/      gitignored: raw/, labels/, built/; adapters, checkpoints, logs
@@ -197,10 +215,10 @@ class TooManyOptions(ValueError): ...
 class StateTooLong(ValueError): ...
 class LabelNotSingleToken(ValueError): ...
 FORMAT_VERSION = "nanohunch-fmt-v1"
-def label_vocab(tokenizer, qtype: QType, n: int) -> tuple[int, ...]
+def label_vocab(tokenizer, qtype: QType, n: int) -> tuple[int, ...]   # Score labels per ADR-0003 Amendment 1 (P0-1)
 def permutations_for(n_options: int, n_perms: int) -> list[Perm]
 def render(tokenizer, state: str, questions: Sequence[Question], *, n_perms: int,
-           max_context: int, truncate: Literal["reject", "head_tail"] = "reject") -> Rendered
+           max_context: int) -> Rendered   # raises StateTooLong; no truncation in the MVP (O8)
 
 # engine.py
 def label_logits(hidden_last, head_weight, label_ids)  # mx: [B,H] x [n,H]^T -> [B,n]; never full vocab
@@ -210,7 +228,7 @@ class MLXBranchScorer:
     def __init__(self, model_path: str, *, adapter_path: str | None = None,
                  prefill_chunk: int = 1024, dtype: str = "bfloat16") -> None
     def score(self, r: Rendered) -> list[BranchLogits]                  # trim branching
-    def score_reencode(self, r: Rendered, *, dtype: str = "float32") -> list[BranchLogits]  # oracle, unbatched
+    def score_reencode(self, r: Rendered) -> list[BranchLogits]  # oracle, unbatched, at the scorer's own dtype
 def pool(branches: Sequence[BranchLogits]) -> dict[str, np.ndarray]    # canonical order log-probs
 @dataclass(frozen=True, slots=True)
 class Answer: question_id: str; qtype: QType; probs: np.ndarray; confidence: float; entropy_norm: float; expected: float | None
@@ -220,14 +238,15 @@ def to_answer(q: Question, probs: np.ndarray) -> Answer
 @dataclass(frozen=True)
 class Calibration: model_revision: str; format_version: str; temperature: dict[str, float]  # f"{qtype}:{n_perms}" (+ ":{bucket}" if Phase 3 rule fires)
                    default_perms: dict[str, int]; fitted_on: str
-def fit_temperature(pooled_logprobs: Sequence[np.ndarray], targets: Sequence[int]) -> float  # log-T search, T in [0.05, 20]
+def fit_temperature(pooled_logprobs: Sequence[np.ndarray], targets: Sequence[int]) -> float  # log-T search, T in [0.05, 20]; a T on a bound is a bug (fit-cal exits 1)
 def apply(cal: Calibration, qtype: QType, n_perms: int, pooled: np.ndarray) -> np.ndarray
 def accuracy(probs: Sequence[np.ndarray], targets: Sequence[int]) -> float
 def ece(conf: np.ndarray, correct: np.ndarray, *, bins: int = 15, scheme: Literal["width", "mass"] = "width") -> float
 def nll(probs, targets) -> float
 def brier(probs, targets) -> float
 def flip_rate(canon_top1: Sequence[int], perm_top1: Sequence[int]) -> float
-def paired_bootstrap(a_correct: np.ndarray, b_correct: np.ndarray, *, n: int = 10_000, seed: int = 0) -> tuple[float, float, float]  # delta, lo, hi
+def paired_bootstrap(a_correct: np.ndarray, b_correct: np.ndarray, *, n: int = 10_000, seed: int = 0,
+                     groups: np.ndarray | None = None) -> tuple[float, float, float]  # delta, lo, hi; resamples whole groups if given
 def bootstrap_ci(stat, *arrays, n: int = 10_000, seed: int = 0) -> tuple[float, float, float]   # Phase 6
 def risk_coverage(conf, correct, coverages=(1.0, 0.9, 0.8, 0.7, 0.5)) -> list[tuple[float, float, float]]  # Phase 6
 
@@ -238,13 +257,15 @@ class EvalItem: state_id: str; group_key: str; state: str; question: Question; g
 class Predictor(Protocol):
     name: str
     def predict(self, state: str, questions: Sequence[Question], *, n_perms: int = 1) -> list[Answer]
-def run_eval(pred: Predictor, items: Sequence[EvalItem], *, perm_suite: Sequence[int] = (1,),
-             baseline: str | None = None, out_dir: Path) -> dict
+def run_eval(pred: Predictor, items: Sequence[EvalItem], *, cfg: dict, baseline: str | None = None,
+             out_dir: Path) -> dict   # cfg: bins, flip_suite or perm_suite, length_edges, coverages, slices, bootstrap
 def family_balanced_accuracy(items: Sequence[EvalItem], correct: np.ndarray) -> float   # SemIf's metric, Phase 3
-def audit_agreement(csv_path: Path) -> dict[str, tuple[float, int]]                    # Phase 4
+def audit_agreement(csv_path: Path, *, against: str = "consensus_top1") -> dict[str, tuple[float, int]]  # Phase 4; Phase 6 reuses it
 
 # dataset.py  (row schema nanohunch.data.v1, keyed by OPTION ID; see Phase 4)
 def assign_split(group_key: str, source: str, fractions: dict[str, float], salt: str) -> str
+def route_split(row: dict, held_out_templates: Sequence[str], fractions: dict[str, float], salt: str) -> str  # "test_ood" first
+def to_display(probs_by_option_id: dict[str, float], canonical_order: Sequence[str], perm: Perm) -> np.ndarray  # t[j] == target[perm[j]]; the ONLY remap
 def renormalize(top: list[dict], labels: list[str], qtype: QType) -> tuple[float, list[float]]  # (candidate_mass, probs in display order)
 def pool_orders(a: dict[str, float], b: dict[str, float]) -> dict[str, float]   # log-linear, keyed by option id
 def consensus(per_teacher: Sequence[dict[str, float]]) -> dict[str, float]      # arithmetic mean, keyed by option id
@@ -256,7 +277,9 @@ def restricted_soft_ce(label_logits, target_probs, valid_mask) -> "mx.array"   #
 def train(cfg_path: Path) -> Path                                               # returns adapter dir; resumes automatically
 
 # glue, not core (names fixed because phases import them)
-# label.py:  TeacherSpec(teacher_id, model, provider_order, top_logprobs=20); label_decision(spec, state, q, perm, *, cache) -> dict
+# label.py:  TeacherSpec(teacher_id, model, provider_order, top_logprobs=20);
+#            label_decision(spec, state, q, perm, *, cache, option_ids, client=None) -> dict | None
+# sources/external.py:  norm_hash(text) -> str  (sha256 of lowercased, whitespace-collapsed text; all overlap checks)
 # tools/decider_predictor.py:  DeciderPredictor(model_dir: Path, device: str = "mps")  implements Predictor
 # sources/external.py:  convert_pngwn, convert_semif, convert_jevbench -> EvalItem | None
 ```

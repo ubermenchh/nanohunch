@@ -1,0 +1,7 @@
+# Public gold evaluation rows; the salt is frozen in split.yaml before test scoring.
+split_config: configs/split.yaml
+out: data/built/eval_v1
+reference_tokenizer: openbmb/MiniCPM5-2B-Base
+quotas:
+  cal: {boolq: 550, arc: 550, csqa: 550, hotpot: 350}
+  test: {boolq: 900, arc: 900, csqa: 900, hotpot: 350, hotpot_pad: 450}

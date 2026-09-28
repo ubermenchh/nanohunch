@@ -1,0 +1,37 @@
+[project]
+name = "nanohunch"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "datasets>=5.0.1",
+    "httpx>=0.28.1",
+    "matplotlib>=3.11.2",
+    "mlx>=0.32.2",
+    "mlx-lm>=0.31.3",
+    "numpy>=2.5.3",
+    "python-dotenv>=1.2.3",
+    "pyyaml>=6.0.3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.8",
+]
+
+[tool.pytest.ini_options]
+# gates/ (overfit-32, numerics gate) run only by explicit path; plain `uv run pytest -q` never trains.
+testpaths = ["tests"]
+pythonpath = ["."]  # flat layout: `import fmt`, `import skeleton.fmt_ref` from the repo root
+markers = ["slow: needs runs/models/minicpm5-2b-base-raw (real 2B weights)"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+# The three capacity-bench copies stay byte-identical to the scripts that produced the MEASURED numbers.
+extend-exclude = ["refs", "docs", "bench/equiv.py", "bench/synth_bench.py", "bench/branch_bench.py"]
+
+[tool.ruff.lint]
+# Pinned instead of ruff's broad default so idioms like `import mlx.nn as nn` stay clean.
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]  # the formatter owns line length

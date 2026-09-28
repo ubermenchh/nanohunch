@@ -122,6 +122,11 @@ When they disagree, this order wins:
   max abs prob diff <= 1e-3 (MEASURED 4.0e-4 today). Requirement S10 is
   redefined as: isolation diff == 0 AND fp32 oracle <= 1e-3. No runtime
   fallback path in serving (OE O5).
+- **Amendment (2026-09-24, P0-4 on real MiniCPM5 weights):** at a 1k-token
+  state the Metal GPU gives 1.08e-3 in fp32 while the CPU backend gives exactly
+  0.0 (bit-identical logits); the GPU gap is fp32 accumulation order across
+  matmul shapes, not branching (`reports/phase0.md`). The oracle therefore runs
+  on the **CPU backend**, fp32, unbatched, and the 1e-3 tolerance is unchanged.
 
 ### R9: MLX batched-attention anomaly (0.12 in fp32)
 - **Disposition: accepted, tripwire.** Time-box investigation to 2 h in
@@ -129,6 +134,12 @@ When they disagree, this order wins:
   no batched re-encode anywhere, and a trainer-vs-engine per-example NLL
   parity test on 64 cal items (tolerance 2e-2 bf16). Tripwire: parity test
   failure blocks any run.
+- **Update (2026-09-24, P0-6, outcome A):** explained. The 0.12 gap appears
+  only when the full-vocabulary head is applied at every position of a very
+  large batch on the Metal GPU (`[16, 1056, 151936]`; 0.0 at B <= 14 and on the
+  CPU). With the ADR-0002 readout (label rows, last position only), batched and
+  single-row forwards agree to 2.9e-4 in fp32. Up for re-review; the MVP keeps
+  batch 1 and the parity test because they cost nothing (`reports/phase0.md`).
 
 ### R10: Teacher logprobs unstable
 - **Disposition: fixed.** Week-1 gate: 50 items x 2 runs x 2 teachers,
@@ -136,6 +147,10 @@ When they disagree, this order wins:
   `require_parameters: true`), host and quantization logged per row. Pass:
   mean candidate_mass >= 0.9 and run-to-run JSD < 0.01. Fallback budgeted
   now: one teacher plus gold labels is an acceptable MVP.
+- **Update (2026-09-25, ADR-0004 Amendment 2):** superseded. Teachers now run
+  locally in MLX (Gemma 4 26B-A4B, Qwen3.6-35B-A3B): candidate mass >= 0.997,
+  same-day reruns bit-identical. Residual risk: a 0.025 cross-day drift of
+  unknown cause, handled by labelling each dataset in one pass.
 
 ### R11: Correlated teacher error
 - **Disposition: fixed + tripwire.** 100-item author audit BEFORE bulk

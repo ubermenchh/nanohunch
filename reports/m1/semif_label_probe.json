@@ -1,0 +1,8 @@
+{
+  "model": "openbmb/MiniCPM5-2B-Base",
+  "n_items": 144,
+  "existing_spaced_accuracy": 0.5277777777777778,
+  "bare_label_accuracy": 0.375,
+  "existing_spaced_family_balanced_accuracy": 0.5277777777777778,
+  "bare_label_family_balanced_accuracy": 0.375
+}

@@ -1,6 +1,6 @@
 # ADR 0002: Read decisions as restricted label-token logits from the frozen LM head
 
-**Status:** accepted (order robustness confirmed or refuted by Phase 0 M2)
+**Status:** accepted (order robustness confirmed or refuted by the Phase 3 B0 flip rate and the Phase 6 order suite)
 **Date:** 2026-09-23
 **Door:** one-way (expensive to reverse)
 **Deciders:** @umang (author), sd-architect
@@ -53,9 +53,10 @@ distributions, adapters that assume a frozen head, and teacher labels read
 through the same label rows. Moving to a scalar head means a new training
 recipe and 2 to 4 new runs.
 
-**Revisit if:** Phase 0 M2 (Qwen3-1.7B-Base pilot) shows top-1 agreement
-under reversal plus 3 permutations < 0.90 even with augmentation and P=2
-pooling; then use a scalar head for Choice only, keeping this readout for
+**Revisit if:** the trained MVP model (Phase 6 order suite; the Qwen3-1.7B
+pilot this originally named was dropped by ADR-0001 Amendment 1) shows top-1
+agreement under reversal plus 3 permutations < 0.90 even with augmentation and
+P=2 pooling; then use a scalar head for Choice only, keeping this readout for
 Score and Noul.
 
 ## Verification

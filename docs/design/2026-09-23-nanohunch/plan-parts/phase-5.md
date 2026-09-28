@@ -50,13 +50,13 @@ before the run that decides whether scaling data (Phase 6) is worth it.
 
 | File | Change |
 |---|---|
-| `train.py` | **You write.** `LoRALinear`, `apply_lora`, `restricted_soft_ce`, `permute_question`, `remap_target`, `make_example`, `run_loop`, checkpoint save/find/load, `train`, `load_adapter_model`. Glue (concrete): `load_config`, `TrainConfig` dataclasses, JSONL logging. |
+| `train.py` | **You write.** `LoRALinear`, `apply_lora`, `restricted_soft_ce`, `permute_question`, `make_example`, `run_loop`, checkpoint save/find/load, `train`, `load_adapter_model`. The target remap is `dataset.to_display` (Phase 4), imported, never re-implemented. Glue (concrete, and if `train.py` nears its budget, move it to `config.py`): `load_config`, `TrainConfig` dataclasses, JSONL logging. |
 | `cli.py` | Glue. `train --config C [--dry-run] [--tok-s N]`: dry run prints `decisions=<n> dropped=<k> tokens=<t> steps=<s> est_hours=<h>` with `h = t * epochs / N / 3600`, `N` default 297 (P0-8, replace with the soak median in `reports/phase0.md`). Without `--dry-run` it calls `train.train(Path(C))` and prints the adapter dir. |
-| `skeleton/to_train_rows.py` | New, glue. Converts the first 950 rows of the Phase 1 gold train file (the 1,000-row file `skeleton/prep_gold.py` wrote next to `data/skeleton/gold_eval.jsonl`; `ls data/skeleton` shows it) into the Phase 4 row schema at `data/skeleton/rows_950.jsonl`. Same 950 rows stock LoRA trained on. |
+| `skeleton/to_train_rows.py` | New, glue. Converts the first 950 rows of the Phase 1 gold train file (the 1,000-row file `skeleton/prep_gold.py` wrote next to `data/skeleton/gold_eval.jsonl`; `ls data/skeleton` shows it) into the Phase 4 row schema at `data/skeleton/rows_950.jsonl`. Same 950 rows stock LoRA trained on, and each row's `canonical_order` is the option order stock showed (the `perm` stored by `skeleton/to_lora_jsonl.py`), so with `perm_augment: false` every item is displayed exactly as stock displayed it. |
 | `configs/skeleton_repro.yaml`, `configs/curve_1k.yaml`, `configs/curve_3k.yaml`, `configs/overfit_32.yaml`, `configs/eval_m2.yaml` | New. Contents below. |
-| `tests/test_train.py` | New. 5 tests below; builds a tiny model with `mlx_lm.models.llama.Model(ModelArgs(model_type="llama", hidden_size=64, num_hidden_layers=2, intermediate_size=128, num_attention_heads=4, num_key_value_heads=2, rms_norm_eps=1e-5, vocab_size=512))`. |
-| `tests/test_numerics_gate.py` | New. 3 tests; reads `NANOHUNCH_ADAPTER`. |
-| `pyproject.toml` | Add `[tool.pytest.ini_options] markers = ["slow: runs the real 2B model"]` if absent. |
+| `tests/test_train.py` | New. 4 fast tests below; builds a tiny model with `mlx_lm.models.llama.Model(ModelArgs(model_type="llama", hidden_size=64, num_hidden_layers=2, intermediate_size=128, num_attention_heads=4, num_key_value_heads=2, rms_norm_eps=1e-5, vocab_size=512))`. |
+| `gates/test_overfit32.py`, `gates/test_numerics_gate.py` | New. 1 and 4 tests. They live outside `tests/` so plain `uv run pytest -q` never starts a 20-minute training run or fails for lack of `NANOHUNCH_ADAPTER`; you run them by explicit path. |
+| `pyproject.toml` | Add `testpaths = ["tests"]` to `[tool.pytest.ini_options]`. |
 | `reports/m2/prereg.md`, `reports/m2/README.md`, `reports/m2/*.json`, `reports/m2/curve.png` | New, committed. |
 
 **Produces (interfaces later phases use)**
@@ -74,6 +74,8 @@ class ConfigError(ValueError): ...          # message names the unknown or missi
 class LoRATargetNotFound(KeyError): ...     # message names the key and the layer index
 class ResumeMismatch(RuntimeError): ...     # checkpoint cfg_sha256 differs from the current config
 @dataclass(frozen=True, slots=True) class TrainExample: token_ids: tuple[int, ...]; label_ids: tuple[int, ...]; target: np.ndarray  # [n] display order
+# One example = one (state row, decision) pair. Phase 4 rows are states with a decisions[] list; train() flattens
+# them, and n_decisions, max_drop_frac and gold_only all count decisions, never rows.
 ExampleFn = Callable[[int, int], TrainExample]          # (epoch, index) -> example; pure, deterministic
 @dataclass(frozen=True) class LoopResult: steps: int; losses: list[float]; adapter_dir: Path
 def load_config(path: Path) -> TrainConfig
@@ -83,8 +85,7 @@ class LoRALinear(nn.Module):                             # params lora_a [in, r]
 def apply_lora(model, cfg: LoRAConfig) -> int            # freezes base, returns trainable parameter count
 def restricted_soft_ce(label_logits, target_probs, valid_mask) -> mx.array   # [B,N],[B,N],[B,N] bool; SUM over decisions
 def permute_question(q: Question, perm: Perm) -> Question
-def remap_target(target_by_id: dict[str, float], option_ids: tuple[str, ...], perm: Perm) -> np.ndarray
-def make_example(tokenizer, row: dict, perm: Perm, lambda_gold: float) -> TrainExample   # raises StateTooLong
+def make_example(tokenizer, row: dict, decision: dict, perm: Perm, lambda_gold: float) -> TrainExample   # raises StateTooLong; target via dataset.to_display
 def run_loop(model, n_examples: int, example_fn: ExampleFn, cfg: TrainConfig, out_dir: Path, *,
              stop_after: int | None = None, force_ckpt_at: int | None = None) -> LoopResult
 def train(cfg_path: Path) -> Path                        # returns <out_dir>/adapter; resumes automatically
@@ -94,7 +95,8 @@ def load_adapter_model(adapter_dir: Path) -> tuple[nn.Module, object]   # traine
 - **Adapter dir** `<out_dir>/adapter/`: `adapters.safetensors`, `adapter_config.json` (`fine_tune_type: "lora"`, `num_layers`,
   `lora_parameters: {rank, scale: alpha/rank, dropout, keys}`), loadable by `mlx_lm.load(model_path, adapter_path=...)` and
   `MLXBranchScorer(adapter_path=...)`; plus `train_meta.json` (`model_path`, `format_version`, `cfg_sha256`, `step`,
-  `data_sha256`).
+  `data_sha256`). `<out_dir>/train_items.jsonl` lists the `(state_id, question_id)` of every example trained on, so the
+  gate can score exactly those items.
 - **Checkpoint dir** `<out_dir>/ckpt-<step>/`: `adapters.safetensors`, `optimizer.safetensors` (flattened `optimizer.state`,
   including its `step`), `state.json` (`step`, `epoch`, `cursor`, `cfg_sha256`, `python_random_state`, `numpy_bitgen_state`,
   `mx_key`).
@@ -132,26 +134,35 @@ seed: 0
 `configs/skeleton_repro.yaml` copies `curve_3k.yaml` and matches the stock run instead:
 `data_path: data/skeleton/rows_950.jsonl`, `out_dir: runs/skeleton_repro`, `n_decisions: 950`, `gold_only: true`,
 `lambda_gold: 1.0`, `lora.alpha: 320` (scale 20.0, as `configs/skeleton_lora.yaml`), `lora.targets` = the `keys` in
-`runs/skeleton/adapter_config.json`, `max_seq: 2048`, `grad_accum: 1`, `epochs: 2` (1,900 steps, as stock),
-`optim: {lr: 2.0e-5, weight_decay: 0.0, warmup_frac: 0.0, schedule: constant, clip_grad_norm: null}`. `configs/overfit_32.yaml`:
+`runs/skeleton/adapter_config.json`, `max_seq: 2048`, `grad_accum: 1`, `epochs: 1` (950 steps, as stock since 2026-09-25),
+`optim: {lr: 5.0e-6, weight_decay: 0.0, warmup_frac: 0.0, schedule: constant, clip_grad_norm: null}`, `perm_augment: false`
+(stock drew one permutation per row, now baked into `canonical_order` by `to_train_rows`). If stock used its default LoRA
+targets, `keys` may be missing from `runs/skeleton/adapter_config.json`; then read the defaults from
+`mlx_lm/tuner/utils.py` for this model type and write them in explicitly. `configs/overfit_32.yaml`:
 `out_dir: runs/overfit32`, `n_decisions: 32`, `gold_only: true`, `lambda_gold: 1.0`, `perm_augment: false`, `max_seq: 1024`,
-`max_drop_frac: 1.0`, `grad_accum: 1`, `max_steps: 300`, `optim.lr: 1.0e-3`, `warmup_frac: 0.03`.
+`max_drop_frac: 1.0`, `grad_accum: 1`, `epochs: 10`, `max_steps: 300`, `optim.lr: 1.0e-3`, `warmup_frac: 0.03` (32 examples x
+10 epochs = 320 micro-steps, so `max_steps: 300` is the binding stop; with the inherited `epochs: 2` the run would end at 64).
 
 `configs/eval_m2.yaml`:
 
 ```yaml
-split: test                  # second pre-registered look at v1 test (M1 was the first); nothing is tuned on it
-perm_suite: [1, 2]           # flip rate = canonical vs the second perm of permutations_for, as in Phase 3
+data: data/built/v1
+split: test                  # test.jsonl, including its split: test_ood rows; second look at v1 test (M1 was the first)
+perm_suite: [1, 2]           # flip rate = canonical vs the second perm of permutations_for (the reversal)
 predictors:
   B0:        {adapter: null,                 calibration: runs/b0/calibration.json,        n_perms: 1}
   curve_1k:  {adapter: runs/curve_1k/adapter, calibration: runs/curve_1k/calibration.json, n_perms: 1}
   curve_3k:  {adapter: runs/curve_3k/adapter, calibration: runs/curve_3k/calibration.json, n_perms: 1}
 baseline: B0
-slices: {gold: {meta.source: [boolq, arc_easy, arc_challenge]}, heldout_template: {meta.template: held_out_templates of configs/data_v1.yaml}}
+slices:
+  gold:             {label_origin: gold}                            # public gold, whatever the source id spelling
+  heldout_template: {split: test_ood, label_origin: spec}           # spec-fact decisions have gold; the kill metric
+  heldout_judgement: {split: test_ood, label_origin: teacher}       # consensus top-1 only; reported, not decisive
+bootstrap: {n: 10000, seed: 0, groups: state_id}
 out_dir: reports/m2
 ```
 
-**Steps** (tests first; `uv run pytest tests/test_train.py -q -m "not slow"` after each)
+**Steps** (tests first; `uv run pytest tests/test_train.py -q` after each)
 
 1. (0.5 h) Look before writing.
    `uv run python -c "import json;print(json.loads(open('data/built/v1/train.jsonl').readline()))"`: confirm the row fields
@@ -166,91 +177,102 @@ out_dir: reports/m2
    `lora_a` is nonzero, the returned count equals `sum(r * (in + out))` over targeted linears, and
    `tree_flatten(model.trainable_parameters())` names end only in `lora_a` or `lora_b`. A target name that does not exist raises
    `LoRATargetNotFound`. Run: expect 1 failure (`ImportError: cannot import name 'apply_lora'`). Implement `LoRALinear` and
-   `apply_lora`: (a) `model.freeze()`; (b) for each of the last `num_layers` blocks, for each target key, replace the module
-   with `LoRALinear.from_base`; (c) `lora_a` uniform in `[-1/sqrt(in), 1/sqrt(in)]`, `lora_b` zeros, `scale = alpha / rank`; (d)
-   forward `linear(x) + scale * ((dropout(x) @ lora_a) @ lora_b)`. Run: expect pass.
+   `apply_lora` to this contract: the base is frozen; only the target linears of the last `num_layers` blocks are wrapped;
+   `lora_a` is small uniform (bound `1/sqrt(in)`), `lora_b` is zero, the gain is `alpha / rank`; the forward is the
+   "What you will understand" formula with the mlx_lm shapes (`lora_a [in, r]`, `lora_b [r, out]`, so `x` goes through
+   `lora_a` first). Run: expect pass.
 3. (1.5 h) Write `test_restricted_soft_ce_matches_masked_full_ce`: (a)
    `restricted_soft_ce(log([[0.5,0.3,0.2]]), [[0.7,0.2,0.1]], all true)` is `0.8869` within `1e-4`; (b) random `hidden [4,8]`,
    `head [50,8]`, `label_ids` of length 3 to 5: `label_logits(hidden, head, ids)` equals `(hidden @ head.T)[:, ids]` within
    `1e-6`, and the restricted loss equals full-vocab CE with non-label logits set to `-inf` within `1e-5`; (c) padding row to N
-   = 6 with `valid_mask` false leaves the loss unchanged within `1e-6`, even with a large logit in the padded slot. Implement:
-   set masked logits to `-inf` (use `mx.where`), `log_softmax` over the last axis, `-(t * logp)` with masked terms forced to 0
-   (avoid `0 * -inf = nan`), sum. Run: expect pass.
+   = 6 with `valid_mask` false leaves the loss unchanged within `1e-6`, even with a large logit in the padded slot. Implement
+   it so that masked slots get no probability mass and contribute exactly 0. The trap test (c) catches: a masked slot with
+   target 0 and log-prob `-inf` gives `0 * -inf = nan`. Run: expect pass.
 4. (1.0 h) Write `test_perm_remap_property`: 500 cases from `np.random.default_rng(0)`, `n` in 2 to 8, random perm and random
    target by option id. Assert for every display position j: `permute_question(q, perm).options[j] == q.options[perm[j]]`,
-   `remap_target(t, ids, perm)[j] == t[ids[perm[j]]]`, the sum is 1 within `1e-9`, and the text at the remapped argmax equals
-   the text of the canonical argmax. Implement both (pure numpy). `make_example` builds the display question, calls
-   `render(tokenizer, state, [q_display], n_perms=1, max_context=cfg.max_seq)` (identity perm), and returns
-   `prefix_ids + branch.token_ids`, `branch.label_ids`, the remapped target. Run: expect pass.
+   `dataset.to_display(t, ids, perm)[j] == t[ids[perm[j]]]`, the sum is 1 within `1e-9`, and the text at the display argmax
+   of the permuted question equals the text of the canonical argmax. This tests that `permute_question` and `to_display`
+   agree, which is where an inversion would hide. Implement `permute_question` (pure). `make_example` builds the display
+   question for one decision, renders it with `n_perms=1` and `max_context=cfg.max_seq`, and returns `prefix_ids +
+   branch.token_ids`, `branch.label_ids`, and the `to_display` target. Run: expect pass.
 5. (4.5 h) Write `test_resume_bitwise` (tiny model, 40 synthetic `TrainExample`s, `grad_accum: 4`, `tmp_path`): run A,
    `run_loop(..., stop_after=6)` uninterrupted, losses `LA`; run B, fresh model with the same seed,
    `stop_after=3, force_ckpt_at=3`; then a fresh model and a fresh `run_loop(..., stop_after=6)` on the same `out_dir` resumes
    from `ckpt-3` and returns losses `LB` for steps 4 to 6 only (`LoopResult.losses` covers steps run in that call). Assert
-   `LB == LA[3:6]` with `==` (bitwise), and that `ckpt-3/state.json` has `cursor == 12`. Implement
-   `run_loop` in this order:
-   1. `mx.random.seed(seed)`, `random.seed(seed)`, `np.random.seed(seed)`.
-   2. `total = max_steps or ceil(n_examples * epochs / grad_accum)`; `warmup = round(warmup_frac * total)`; schedule via
-      `mlx.optimizers.join_schedules([linear_schedule(0, lr, warmup), cosine_decay(lr, total - warmup, lr * min_lr_frac)], [warmup])`,
-      or the constant `lr`; `optim.AdamW(learning_rate=schedule, betas, weight_decay)`.
-   3. Resume: newest `ckpt-<int>` dir (ignore `*.tmp`); if `cfg_sha256` differs raise `ResumeMismatch`; load adapters
-      (`model.load_weights(..., strict=False)`), optimizer state, RNG states, `step`, `epoch`, `cursor`; truncate `log.jsonl` to
-      lines with `step <= resumed step`.
-   4. Epoch order: `random.Random(seed + epoch).shuffle(indices)`. Each example's perm comes from
-      `np.random.default_rng((seed, epoch, index))`, so order and perms never depend on how many steps ran before.
-   5. Micro-step: `ex = example_fn(epoch, index)`; `loss, grads = nn.value_and_grad(model, f)(...)` where `f` returns
-      `restricted_soft_ce(...) / grad_accum`; add grads into an accumulator with `tree_map`.
-   6. Every `grad_accum` micro-steps: clip with `optim.clip_grad_norm` if set, `optimizer.update(model, acc)`,
-      `mx.eval(model.parameters(), optimizer.state)`, `step += 1`, append the log line (entropy of the restricted softmax,
-      `mx.get_peak_memory() / 1e9`).
-   7. If `now - last_ckpt >= ckpt_minutes * 60` or `step == force_ckpt_at`: write `ckpt-<step>.tmp/`, then `os.rename` to
-      `ckpt-<step>` (atomic), delete all but the newest `keep_ckpts`.
-   8. At the end write `adapter.tmp/` with the three adapter files and rename to `adapter/`. Gradient checkpointing: wrap each
-      block's `__call__` with `mx.checkpoint` when `grad_checkpoint` is true. Run: expect `4 passed`.
-6. (1.0 h) Glue: `load_config` (reject unknown and missing keys with `ConfigError`), `train` (load config, `mlx_lm.load`,
-   `apply_lora`, read rows, drop rows that raise `StateTooLong` at `max_seq` and raise `ConfigError` if the dropped fraction
-   exceeds `max_drop_frac`, keep gold-only rows if `gold_only`, seeded shuffle, prefix `n_decisions`, call `run_loop`),
-   `load_adapter_model`, and `cli.py train`. `uv run python cli.py train --config configs/curve_1k.yaml --dry-run`; expect
+   `LB == LA[3:6]` with `==` (bitwise), and that `ckpt-3/state.json` has `cursor == 12`. Implement `run_loop` to this
+   contract. The order and the code are yours; the relevant APIs are in `mlx.optimizers` (schedules, AdamW, gradient
+   clipping), `mlx.nn.value_and_grad` and `mx.checkpoint`.
+   - **Determinism.** Every RNG (mx, python, numpy) is seeded from `seed` before anything random happens. Epoch order is a
+     function of `(seed, epoch)` only, and each example's perm is a function of `(seed, epoch, index)` only, so neither
+     depends on how many steps ran before a resume.
+   - **Length and schedule.** The run stops at `total = max_steps or ceil(n_examples * epochs / grad_accum)` optimizer
+     steps, even if epochs remain. Linear warmup over `warmup_frac * total` steps, then cosine decay to
+     `lr * min_lr_frac`, or a constant `lr`.
+   - **Accumulation.** Each micro-step's loss is scaled by `1 / grad_accum`; the optimizer steps once per `grad_accum`
+     micro-steps on the summed gradients, clipped first if `clip_grad_norm` is set; each optimizer step writes one log line.
+   - **Resume.** A checkpoint holds everything needed to continue bitwise: adapter weights, the full optimizer state
+     including its step, all RNG states, `step`, `epoch`, `cursor`. On resume, take the newest complete `ckpt-<int>`
+     (ignore `*.tmp`), raise `ResumeMismatch` if `cfg_sha256` **or** `data_sha256` differs, and truncate `log.jsonl` to the
+     resumed step.
+   - **Durability.** Checkpoint every `ckpt_minutes` (and at `force_ckpt_at`), written as `.tmp` then renamed, keeping the
+     newest `keep_ckpts`. The final adapter is written the same way, so `adapter/` exists only after a finished run.
+   - `grad_checkpoint: true` trades compute for memory per block. Run: expect `4 passed`.
+6. (1.0 h) Glue: `load_config` (reject unknown and missing keys with `ConfigError`), `train` (load config, seed, `mlx_lm.load`,
+   `apply_lora` (after seeding, so `lora_a` depends on `cfg.seed`), read rows, **flatten to `(row, decision)` pairs**, drop
+   decisions that raise `StateTooLong` at `max_seq` and raise `ConfigError` if the dropped fraction of decisions exceeds
+   `max_drop_frac`, keep decisions with `label_origin in {"gold", "spec"}` if `gold_only`, seeded shuffle, prefix
+   `n_decisions` decisions, write `train_items.jsonl`, call `run_loop`), `load_adapter_model`, and `cli.py train`. `uv run python cli.py train --config configs/curve_1k.yaml --dry-run`; expect
    `decisions=1000` and `est_hours` between 0.9 and 2.0 (DERIVED design value 1.3 h). Outside that band, record the number and
    rescale the week-7 schedule before step 11.
-7. (1.5 h) Write slow `test_overfit_32`: `shutil.rmtree("runs/overfit32", ignore_errors=True)`,
+7. (1.5 h) Write `gates/test_overfit32.py::test_overfit_32`: `shutil.rmtree("runs/overfit32", ignore_errors=True)`,
    `train(Path("configs/overfit_32.yaml"))`; assert the log has 300 lines and the mean loss of the last 10 is `< 0.05`.
-   `caffeinate -i uv run pytest tests/test_train.py -q -m slow`; expect `1 passed` in about 15 to 20 minutes (DERIVED: 300 steps
-   under 1,024 tokens at about 300 tok/s).
-8. (1.5 h, plus 3.0 h reserved for gate debugging) Write `tests/test_numerics_gate.py`. Module fixture reads `os.environ["NANOHUNCH_ADAPTER"]` (missing:
-   `pytest.fail("set NANOHUNCH_ADAPTER")`, never skip) and `model_path` from its `train_meta.json`. Items: the 64 gold rows of
-   `data/built/v1/cal.jsonl` with the smallest `state_id` that fit 4,096 tokens.
-   - `test_trainer_engine_nll_parity`: trainer side `load_adapter_model(adapter)`,
+   `caffeinate -i uv run pytest gates/test_overfit32.py -q`; expect `1 passed` in about 15 to 20 minutes (DERIVED: 300 steps
+   under 1,024 tokens at about 300 tok/s). Then run the resume drill on the real model once: start the same config, Ctrl-C
+   after the first checkpoint (set `ckpt_minutes: 2` for the drill), rerun, and check that `log.jsonl` continues without a gap
+   or duplicate step. R18 depends on resume working at 2B scale, not only on the tiny model.
+8. (1.5 h, plus 3.0 h reserved for gate debugging) Write `gates/test_numerics_gate.py`. Module fixture reads `os.environ["NANOHUNCH_ADAPTER"]` (missing:
+   `pytest.fail("set NANOHUNCH_ADAPTER")`, never skip) and `model_path` from its `train_meta.json`. Items: the 64 gold
+   decisions of `data/built/v1/cal.jsonl` (public gold and spec gold, at least 16 of them Score) with the smallest
+   `state_id` that fit 4,096 tokens.
+   - `test_trainer_engine_nll_parity` (R9): trainer side `load_adapter_model(adapter)`,
      `make_example(..., perm=identity, lambda_gold=1.0)`, `-log softmax(label_logits)[gold]`; engine side
      `MLXBranchScorer(model_path, adapter_path=adapter).score(render(...))`, `-log softmax(logits)[gold]`. Assert
-     `|mean NLL_trainer - mean NLL_engine| <= 2e-2`; print the per-item max.
-   - `test_adapter_applied`: 5 prompts, engine with and without the adapter; assert max abs logit diff `> 1e-3` (R3).
-   - `test_overfit32_through_engine`: engine with `runs/overfit32/adapter` (fail with "run: uv run pytest tests/test_train.py -m
-     slow" if absent) on the 32 training items; assert 32/32 top-1 equal gold and mean NLL `< 0.1`.
-   Run `NANOHUNCH_ADAPTER=runs/overfit32/adapter uv run pytest tests/test_numerics_gate.py -q`; expect `3 passed`. On failure, check
+     **per item** `|NLL_trainer - NLL_engine| <= 2e-2` (R9 says per-example; a mean can hide one badly wrong item).
+   - `test_adapter_applied` (R3): 5 prompts, engine with and without the adapter; assert **each** prompt's max abs logit
+     diff is `> 1e-3`.
+   - `test_oracle_fp32_with_adapter` (R8): 8 of the items on the CPU backend (as Phase 2 `test_oracle_fp32`, P0-4
+     decision), `MLXBranchScorer(model_path, adapter_path=adapter, dtype="float32")`; softmax of `score` vs
+     `score_reencode(r)` on that fp32 scorer, max abs prob diff `<= 1e-3`.
+   - `test_overfit32_through_engine`: engine with `runs/overfit32/adapter` (fail with "run: uv run pytest
+     gates/test_overfit32.py" if absent) on exactly the items in `runs/overfit32/train_items.jsonl`; assert 32/32 top-1
+     equal gold and mean NLL `< 0.1`.
+   Run `NANOHUNCH_ADAPTER=runs/overfit32/adapter uv run pytest gates/test_numerics_gate.py -q`; expect `4 passed`. On failure, check
    in this order: head rows (tied vs `lm_head`), the pre-head scale from step 1, `scale` written as `alpha` instead of
    `alpha / rank` (diffs near a constant factor), last position off by one, a BOS token added on one side only. Start the 8 h
    kill clock at the first failure.
 9. (0.5 h active, about 45 min unattended) Reproduce the skeleton. `uv run python -m skeleton.to_train_rows` (expect
    `rows=950`), then
    `caffeinate -i uv run python cli.py train --config configs/skeleton_repro.yaml 2>&1 | tee runs/skeleton_repro.log`. Gate it:
-   `NANOHUNCH_ADAPTER=runs/skeleton_repro/adapter uv run pytest tests/test_numerics_gate.py -q`, expect `3 passed`. Evaluate with
+   `NANOHUNCH_ADAPTER=runs/skeleton_repro/adapter uv run pytest gates/test_numerics_gate.py -q`, expect `4 passed`. Evaluate with
    the Phase 1 reader for an apples-to-apples number:
    `uv run python -m skeleton.b0_reader --model runs/models/minicpm5-2b-base-raw --adapter runs/skeleton_repro/adapter --data data/skeleton/gold_eval.jsonl --out reports/skeleton/repro_fwd.json`,
    the same with `--reverse --out reports/skeleton/repro_rev.json`, then
    `uv run python -m skeleton.tiny_eval --name repro --fwd reports/skeleton/repro_fwd.json --rev reports/skeleton/repro_rev.json --json reports/skeleton.json`.
-   Expect `all` accuracy within 0.01 of the `lora` block.
-10. (1.0 h) Pre-register. Write `reports/m2/prereg.md` containing, verbatim, both kill criteria below, the metric (accuracy on
-    the `heldout_template` slice of `configs/eval_m2.yaml`, `paired_bootstrap(n=10_000, seed=0)` vs calibrated B0), and the
-    configs' `sha256sum`.
+   Expect `all` accuracy within 0.02 of the `lora` block. The losses differ on purpose (restricted soft CE vs full-vocab CE),
+   so 0.01 on 1,000 items would sit inside run-to-run noise.
+10. (1.0 h) Pre-register. Write `reports/m2/prereg.md` containing, verbatim, both kill criteria below; the metric (gold
+    accuracy on the `heldout_template` slice of `configs/eval_m2.yaml`: `test_ood` spec-fact decisions, paired bootstrap
+    `n=10_000, seed=0` resampled by `state_id`, vs calibrated B0); the slice's decision and state counts; the CI half-width
+    those counts imply at B0's accuracy (the minimum detectable effect); and the configs' `sha256sum`.
     `git add reports/m2/prereg.md configs/curve_*.yaml configs/eval_m2.yaml && git commit -m "phase5: pre-register M2 kill rule"`.
     This commit must exist before step 12 starts.
 11. (0.5 h active, about 1.3 h unattended)
     `mkdir -p runs/curve_1k && caffeinate -i uv run python cli.py train --config configs/curve_1k.yaml 2>&1 | tee -a runs/curve_1k/train.log`.
     After a crash or sleep, rerun the same command; it resumes. Gate:
-    `NANOHUNCH_ADAPTER=runs/curve_1k/adapter uv run pytest tests/test_numerics_gate.py -q`, expect `3 passed`.
+    `NANOHUNCH_ADAPTER=runs/curve_1k/adapter uv run pytest gates/test_numerics_gate.py -q`, expect `4 passed`.
 12. (0.5 h active, about 4 h unattended, overnight) The same two commands with `curve_3k`.
 13. (2.0 h) Calibrate and evaluate.
-    `uv run python cli.py fit-cal --adapter runs/curve_1k/adapter --split cal --n-perms 1 --out runs/curve_1k/calibration.json`,
+    `uv run python cli.py fit-cal --adapter runs/curve_1k/adapter --split cal --data data/built/v1/cal.jsonl --n-perms 1 --out runs/curve_1k/calibration.json`,
     the same for `curve_3k`, then `caffeinate -i uv run python cli.py eval --config configs/eval_m2.yaml`. Expect
     `reports/m2/eval.json` with, per predictor and slice: `acc`, `ece15`, `nll`, `flip`, and for non-baseline predictors
     `delta, lo, hi`.
@@ -258,17 +280,18 @@ out_dir: reports/m2
     accuracy per slice with CI bars), the delta table with 95% CIs, flip rate vs B0, the training-loss plot from both
     `log.jsonl` files, wall time and peak memory, the skeleton reproduction line, and the decision taken under the
     pre-registered rule with a link to the prereg commit. `uv run ruff format . && uv run ruff check --fix .`,
-    `uv run pytest -q -m "not slow"`, commit `phase5: M2 learning curve and kill decision`, log hours in `ledger/hours.csv`.
+    `uv run pytest -q` (expect `49 passed`: 45 before plus 4 in `tests/test_train.py`), commit
+    `phase5: M2 learning curve and kill decision`, log hours in `ledger/hours.csv`.
 15. (1.5 h) Buffer for interruptions and one extra resume. Steps sum to 24.0 h; the buffer covers one lost evening.
 
 **Verification gate**
 
 - `uv run python tools/loc.py` exits 0 with `train.py` included (core total at most 1,000 lines).
-- `uv run pytest tests/test_train.py -q -m "not slow"` prints `4 passed, 1 deselected`; `-m slow` prints `1 passed`.
-- `NANOHUNCH_ADAPTER=<dir> uv run pytest tests/test_numerics_gate.py -q` prints `3 passed` for `runs/overfit32/adapter`,
+- `uv run pytest -q` prints `49 passed`; `uv run pytest gates/test_overfit32.py -q` prints `1 passed`.
+- `NANOHUNCH_ADAPTER=<dir> uv run pytest gates/test_numerics_gate.py -q` prints `4 passed` for `runs/overfit32/adapter`,
   `runs/skeleton_repro/adapter`, `runs/curve_1k/adapter` and `runs/curve_3k/adapter`. No overnight run starts before the
   overfit32 gate passes.
-- `reports/skeleton.json`: `abs(repro.all.acc - lora.all.acc) <= 0.01`.
+- `reports/skeleton.json`: `abs(repro.all.acc - lora.all.acc) <= 0.02`.
 - Each curve `log.jsonl`: every `loss` finite, mean loss of the last 10% of steps below the first 10%, `peak_mem_gb` under 24.
 - `git log --format=%cI -1 -- reports/m2/prereg.md` is earlier than the `ts` of the first line of `runs/curve_3k/log.jsonl`.
 - `reports/m2/README.md` committed by end of week 7 (R17 calendar rule).
@@ -288,9 +311,10 @@ out_dir: reports/m2
 **Kill criterion**
 
 - **Data scaling (tied to the ledger assumption that soft teacher labels generalise beyond the templates trained on).** If the
-  held-out-template delta over calibrated B0 at 3k decisions is below +1 pt or its 95% CI crosses 0, then stop scaling data,
-  skip Phase 6, and go to Phase 7 publishing the B0 + engine + calibration + order-robustness story.
-- **Numerics.** If `tests/test_numerics_gate.py` still fails after 8 h of debugging (3 h inside this phase's budget, the rest
+  held-out-template delta over calibrated B0 at 3k decisions (gold accuracy on `test_ood` spec-fact decisions, CI
+  resampled by `state_id`) is below +1 pt or its 95% CI crosses 0, then stop scaling data, skip Phase 6, and go to Phase 7
+  publishing the B0 + engine + calibration + order-robustness story.
+- **Numerics.** If `gates/test_numerics_gate.py` still fails after 8 h of debugging (3 h inside this phase's budget, the rest
   from week-7 slack), then train the curve with stock `mlx_lm.lora` exactly as in Phase 1 step 7 (hard one-hot labels,
   full-vocab CE on the completion token, no augmentation), mark `train.py` as incomplete in `reports/m2/README.md`, and
   apply the data-scaling rule to those adapters.
