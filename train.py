@@ -8,11 +8,9 @@ from mlx.utils import tree_map
 from data import Item, encode, shuffled
 from model import answer_logits
 
-def loss_fn(model, ids: list[int], label_ids: list[int], gold: int, brier: float = 0.0) -> mx.array:
+def loss_fn(model, ids: list[int], label_ids: list[int], gold: int) -> mx.array:
     logits = answer_logits(model, ids, label_ids)
-    ce = nn.losses.cross_entropy(logits[None], mx.array([gold])).mean()
-    onehot = (mx.arange(len(label_ids)) == gold).astype(logits.dtype)
-    return ce + brier * ((mx.softmax(logits) - onehot) ** 2).sum()
+    return nn.losses.cross_entropy(logits[None], mx.array([gold])).mean()
 
 def train(
     model, 
@@ -23,7 +21,6 @@ def train(
     seed: int = 0, 
     shuffle: bool = True,
     on_step = None,
-    brier: float = 0.0,
 ) -> list[float]:
     opt = optim.AdamW(learning_rate=lr)
     grad_fn = nn.value_and_grad(model, loss_fn)
@@ -34,7 +31,7 @@ def train(
         perm = tuple(rng.sample(range(n), n)) if shuffle else tuple(range(n))
         s = shuffled(item, perm)
         ids, label_ids = encode(tok, s)
-        loss, grads = grad_fn(model, ids, label_ids, s.gold, brier)
+        loss, grads = grad_fn(model, ids, label_ids, s.gold)
         grads_sum = grads if grads_sum is None else tree_map(mx.add, grads_sum, grads)
         mx.eval(loss, grads_sum)
         losses.append(loss.item())
