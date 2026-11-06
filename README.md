@@ -14,19 +14,20 @@ restricted softmax cross-entropy, option-order shuffling, temperature scaling.
 | `eval.py` | Pooling over option orders, accuracy, flip rate, ECE, temperature fit |
 | `run.py` | The whole experiment in `# %%` cells: base model, train, calibrate, report |
 
-Run it with `uv run python run.py` (add `--small` for a quick check). It logs to wandb.
+Run it with `uv run python run.py` (add `--small` for a quick check, `--seed S` and `--n N` to change the seed and
+the number of training questions per dataset). It logs to wandb.
 
 ## Results
 
 Setup: Qwen3-4B-Base, LoRA (rank 8, alpha 160, 8 layers, lr 5e-5), trained on 1,050 public gold questions
 (350 each from BoolQ, ARC-Challenge and CommonsenseQA train splits) with the option order shuffled each time.
 The temperature is fitted on 600 other train-split questions (200 each), never on training or validation
-questions. Scores are on 750 validation questions (250 each). One seed (0). The same seed gives the same result,
-checked twice. Intervals are 95%, from a paired bootstrap that resamples the questions (`analyze.py`).
+questions. Scores are on 750 validation questions (250 each). Seed 0 unless said otherwise; the same seed gives the
+same result, checked twice. Seeds 1 and 2 are below. Intervals are 95%, from a paired bootstrap that resamples the questions (`analyze.py`).
 
 **The base model is already strong on this data.** B0 accuracy is .892 (BoolQ), .896 (ARC), .820 (CSQA).
 
-**Trained minus B0, all 750 questions** (a negative number is better for NLL, ECE and flip):
+**Trained minus B0, seed 0, all 750 questions** (a negative number is better for NLL, ECE and flip):
 
 | | Accuracy | NLL | ECE | Flip rate |
 |---|---|---|---|---|
@@ -36,16 +37,31 @@ checked twice. Intervals are 95%, from a paired bootstrap that resamples the que
 - Accuracy does not change, to within about one point.
 - Training makes the raw probabilities much better calibrated. Most of that gain is also available
   from temperature scaling alone (B0 ECE falls from .065 / .149 / .180 to .019 / .054 / .045).
-- After scaling, a small gain in loss remains. Answers change less when the options are reordered.
-  The drop is clearest on CSQA (flip rate .316 to .248, interval [-.112, -.028]).
+- After scaling, a small gain in loss remains for seed 0, and answers change less when the options are
+  reordered. Seeds 1 and 2 (next table) show that the order effect is mostly seed luck.
 - B0 is under-confident (temperature .554), not over-confident. Pooling the probabilities over three
   option orders softens them.
+
+**Three training seeds** (350 questions per dataset, 750 validation questions, each model with its own temperature):
+
+| | Temperature | Accuracy | NLL | Flip rate | CSQA flip rate |
+|---|---|---|---|---|---|
+| B0 (no training) | .554 | .867 | .361 | .191 | .316 |
+| Seed 0 | .841 | .868 | .347 | .165 | .248 |
+| Seed 1 | .841 | .871 | .350 | .171 | .284 |
+| Seed 2 | .766 | .868 | .356 | .188 | .312 |
+
+- Accuracy does not change in any seed.
+- The loss gain after temperature scaling is small (.005 to .014) and one seed is barely better than B0.
+- The CSQA flip rate falls by anything from 0 to .07 depending on the seed. Do not read the seed 0 drop
+  as a result.
+- Training seed alone moves the scores by more than the bootstrap interval suggests. Seed 2 minus seed 0:
+  NLL +.009 [+.001, +.016], flip +.023 [+.005, +.041]. Raw NLL differs by up to .016 between seeds.
 
 **Tried and dropped: cross-entropy plus 0.5 x Brier loss** (commit `33ad703`, reverted after it).
 Brier minus cross-entropy, both with their own temperature, all 750 questions: accuracy 0.000,
 NLL -.002 [-.003, -.000], ECE -.002 [-.011, +.010], flip -.003 [-.008, +.003]. The NLL difference is
-smaller than the spread between two cross-entropy runs with different starting weights (up to .007),
-so it is not a real gain. Plain cross-entropy with a held-out temperature is enough.
+smaller than the spread between cross-entropy runs with different seeds (up to .009), so it is not a real gain. Plain cross-entropy with a held-out temperature is enough.
 
 **More data and a higher learning rate did not help either.** Both runs below changed one thing from
 the run above (350 questions per dataset, learning rate 5e-5), all 750 validation questions, each
@@ -68,7 +84,8 @@ model with its own temperature:
 learning beating supervised cross-entropy plus temperature scaling. Laya's own ablation found no gain
 from the RL term. So this repo has no RL stage.
 
-**Limits.** One training seed. The bootstrap covers the choice of questions, not the training seed.
+**Limits.** Three training seeds at 350 questions, one at 900 and one at learning rate 2e-4. The bootstrap
+covers the choice of questions, not the training seed, so it understates the real uncertainty.
 ECE with 10 bins is biased on 250 questions, so NLL is the cleaner number. One temperature is fitted
 across datasets that have 2, 4 and 5 options. The public datasets are easy for this model, so there is
 little room for accuracy to rise.

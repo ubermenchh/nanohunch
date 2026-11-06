@@ -18,16 +18,34 @@ from model import add_lora, answer_logits, load_model
 from train import train
 
 SMALL = "--small" in sys.argv  # a quick end-to-end check with a handful of questions
+
+
+def arg(name, default):  # e.g. --seed 1
+    return int(sys.argv[sys.argv.index(name) + 1]) if name in sys.argv else default
+
+
+SEED = arg("--seed", 0)  # changes the LoRA start, the order of the training questions and the option shuffles
 MODEL = "Qwen/Qwen3-4B-Base"
-N_TRAIN, N_EVAL, N_CAL = (6, 4, 30) if SMALL else (900, 250, 200)  # questions per dataset
+N_TRAIN, N_EVAL, N_CAL = (6, 4, 30) if SMALL else (arg("--n", 900), 250, 200)  # questions per dataset
 LR, RANK, ALPHA, LAYERS = 5e-5, 8, 160, 8
-TAG = "n900"  # names the saved files, so runs with different settings do not overwrite each other
+# TAG names the saved files, so runs with different settings do not overwrite each other
+TAG = f"n{N_TRAIN}" + (f"_s{SEED}" if SEED else "")
 DATASETS = ("boolq", "arc", "csqa")
 
 wandb.init(
     project="nanohunch",
     mode="disabled" if SMALL else "online",
-    config=dict(model=MODEL, n_train=N_TRAIN, n_eval=N_EVAL, n_cal=N_CAL, lr=LR, rank=RANK, alpha=ALPHA, layers=LAYERS),
+    config=dict(
+        model=MODEL,
+        n_train=N_TRAIN,
+        n_eval=N_EVAL,
+        n_cal=N_CAL,
+        lr=LR,
+        seed=SEED,
+        rank=RANK,
+        alpha=ALPHA,
+        layers=LAYERS,
+    ),
 )
 model, tok = load_model(MODEL)
 
@@ -53,7 +71,7 @@ def metrics(cases, temp=1.0):
 val = {name: load_items(name, "validation", N_EVAL) for name in DATASETS}
 cal = [it for name in DATASETS for it in load_items(name, "train", N_CAL, skip=N_TRAIN)]
 train_items = [it for name in DATASETS for it in load_items(name, "train", N_TRAIN)]
-random.Random(0).shuffle(train_items)
+random.Random(SEED).shuffle(train_items)
 
 # %% B0: logits on the validation and calibration questions, then fit its temperature
 b0_val = {name: collect(logits_fn, items) for name, items in val.items()}
@@ -61,7 +79,7 @@ T_b0 = fit_temperature(collect(logits_fn, cal))
 print(f"B0 temperature {T_b0:.3f}")
 
 # %% Train the LoRA on public train sets, option order shuffled each time
-mx.random.seed(0)  # the LoRA starts from the same random weights on every run
+mx.random.seed(SEED)  # the LoRA starts from the same random weights on every run
 add_lora(model, rank=RANK, alpha=ALPHA, num_layers=LAYERS)
 t = time.time()
 
@@ -73,7 +91,7 @@ def on_step(step, loss):
 
 
 recent = []
-log = train(model, tok, train_items, lr=LR, on_step=on_step)
+log = train(model, tok, train_items, lr=LR, seed=SEED, on_step=on_step)
 print(f"trained on {len(train_items)} questions in {time.time() - t:.0f}s, loss {log[0]:.3f} -> {log[-1]:.3f}")
 mx.savez(f"adapter_{TAG}.npz", **dict(tree_flatten(model.trainable_parameters())))
 
