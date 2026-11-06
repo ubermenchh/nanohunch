@@ -20,3 +20,4 @@ adapter_alpha16.npz
 runs_log_alpha160.txt
 runs_log*.txt
 runs_watch.log
+adapter_*.npz

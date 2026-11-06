@@ -21,6 +21,7 @@ SMALL = "--small" in sys.argv  # a quick end-to-end check with a handful of ques
 MODEL = "Qwen/Qwen3-4B-Base"
 N_TRAIN, N_EVAL, N_CAL = (6, 4, 30) if SMALL else (350, 250, 200)  # questions per dataset
 LR, RANK, ALPHA, LAYERS = 5e-5, 8, 160, 8
+TAG = "ce"  # names the saved files, so runs with different settings do not overwrite each other
 DATASETS = ("boolq", "arc", "csqa")
 
 wandb.init(
@@ -65,14 +66,14 @@ add_lora(model, rank=RANK, alpha=ALPHA, num_layers=LAYERS)
 t = time.time()
 log = train(model, tok, train_items, lr=LR, on_step=lambda step, loss: wandb.log({"train/loss": loss}, step=step))
 print(f"trained on {len(train_items)} questions in {time.time() - t:.0f}s, loss {log[0]:.3f} -> {log[-1]:.3f}")
-mx.savez("adapter.npz", **dict(tree_flatten(model.trainable_parameters())))
+mx.savez(f"adapter_{TAG}.npz", **dict(tree_flatten(model.trainable_parameters())))
 
 # %% Trained model: the same steps
 tr_val = {name: collect(logits_fn, items) for name, items in val.items()}
 T_tr = fit_temperature(collect(logits_fn, cal))
 # Save the logits, so confidence intervals (analyze.py) can be computed without running the model again.
 Path("runs").mkdir(exist_ok=True)
-with open("runs/cases.pkl", "wb") as f:
+with open(f"runs/cases_{TAG}.pkl", "wb") as f:
     pickle.dump(dict(b0=b0_val, trained=tr_val, T_b0=T_b0, T_trained=T_tr), f)
 print(f"trained temperature {T_tr:.3f}")
 
