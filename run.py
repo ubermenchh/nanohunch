@@ -21,13 +21,14 @@ SMALL = "--small" in sys.argv  # a quick end-to-end check with a handful of ques
 MODEL = "Qwen/Qwen3-4B-Base"
 N_TRAIN, N_EVAL, N_CAL = (6, 4, 30) if SMALL else (350, 250, 200)  # questions per dataset
 LR, RANK, ALPHA, LAYERS = 5e-5, 8, 160, 8
-TAG = "ce"  # names the saved files, so runs with different settings do not overwrite each other
+BRIER = 0.5  # weight of the Brier term in the loss; 0.0 is plain cross-entropy
+TAG = f"brier{BRIER}"
 DATASETS = ("boolq", "arc", "csqa")
 
 wandb.init(
     project="nanohunch",
     mode="disabled" if SMALL else "online",
-    config=dict(model=MODEL, n_train=N_TRAIN, n_eval=N_EVAL, n_cal=N_CAL, lr=LR, rank=RANK, alpha=ALPHA, layers=LAYERS),
+    config=dict(model=MODEL, n_train=N_TRAIN, n_eval=N_EVAL, n_cal=N_CAL, lr=LR, rank=RANK, alpha=ALPHA, layers=LAYERS, brier=BRIER),
 )
 model, tok = load_model(MODEL)
 
@@ -64,7 +65,7 @@ print(f"B0 temperature {T_b0:.3f}")
 mx.random.seed(0)  # the LoRA starts from the same random weights on every run
 add_lora(model, rank=RANK, alpha=ALPHA, num_layers=LAYERS)
 t = time.time()
-log = train(model, tok, train_items, lr=LR, on_step=lambda step, loss: wandb.log({"train/loss": loss}, step=step))
+log = train(model, tok, train_items, lr=LR, brier=BRIER, on_step=lambda step, loss: wandb.log({"train/loss": loss}, step=step))
 print(f"trained on {len(train_items)} questions in {time.time() - t:.0f}s, loss {log[0]:.3f} -> {log[-1]:.3f}")
 mx.savez(f"adapter_{TAG}.npz", **dict(tree_flatten(model.trainable_parameters())))
 
