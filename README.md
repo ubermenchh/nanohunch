@@ -47,6 +47,23 @@ NLL -.002 [-.003, -.000], ECE -.002 [-.011, +.010], flip -.003 [-.008, +.003]. T
 smaller than the spread between two cross-entropy runs with different starting weights (up to .007),
 so it is not a real gain. Plain cross-entropy with a held-out temperature is enough.
 
+**More data and a higher learning rate did not help either.** Both runs below changed one thing from
+the run above (350 questions per dataset, learning rate 5e-5), all 750 validation questions, each
+model with its own temperature:
+
+| Change | Accuracy | NLL | ECE | Flip rate |
+|---|---|---|---|---|
+| 900 questions per dataset (2,700 in all) | +.004 [-.007, +.016] | -.001 [-.011, +.010] | +.002 [-.013, +.020] | +.005 [-.013, +.025] |
+| Learning rate 2e-4 (4 times higher) | -.005 [-.019, +.007] | +.015 [+.001, +.032] | -.004 [-.017, +.017] | +.069 [+.049, +.091] |
+
+- With 900 questions the training loss stays flat at about 0.44 (mean of the first 50 steps .417, of
+  the last 50 .459). Each logged step is the mean of 8 questions and is very noisy, so use
+  `train/loss_avg30` in wandb, not the raw curve.
+- At 2e-4 the answers change more with the option order (flip rate .088 to .176 on BoolQ). The loss
+  fell a little during training, but validation did not follow, so training loss is not a good signal here.
+- Accuracy stays within noise of B0 in all three runs. The limit is the labels and the task, not the amount
+  of training or the step size.
+
 **About "RLCD".** Open models that use the name (Laya, eve-rlcd, von and others) do not show reinforcement
 learning beating supervised cross-entropy plus temperature scaling. Laya's own ablation found no gain
 from the RL term. So this repo has no RL stage.
