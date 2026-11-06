@@ -58,6 +58,7 @@ T_b0 = fit_temperature(collect(logits_fn, cal))
 print(f"B0 temperature {T_b0:.3f}")
 
 # %% Train the LoRA on public train sets, option order shuffled each time
+mx.random.seed(0)  # the LoRA starts from the same random weights on every run
 add_lora(model, rank=RANK, alpha=ALPHA, num_layers=LAYERS)
 t = time.time()
 log = train(model, tok, train_items, lr=LR, on_step=lambda step, loss: wandb.log({"train/loss": loss}, step=step))
