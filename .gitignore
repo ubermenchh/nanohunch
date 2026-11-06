@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.env
+.DS_Store
+# Data, weights and run output stay local.
+/tests/
+/data/
+/runs/
+*.safetensors
+# Agent session memory stays local.
+/.jarvis/
+adapter.npz
+wandb/
+runs_log.txt
+adapter_alpha16.npz
+runs_log_alpha160.txt
+runs_log*.txt
+runs_watch.log

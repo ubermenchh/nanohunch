@@ -1,0 +1,31 @@
+[project]
+name = "nanohunch"
+version = "0.1.0"
+description = "A small System One model: Qwen3-4B-Base reads a text state and returns calibrated answer probabilities."
+requires-python = ">=3.12"
+dependencies = [
+    "datasets>=5.0.1",
+    "mlx>=0.32.2",
+    "mlx-lm>=0.31.3",
+    "numpy>=2.5.3",
+    "wandb>=0.31.0",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=6.29",
+    "pytest>=9.1.1",
+    "ruff>=0.16.8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]  # flat layout: `import model` from the repo root
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
