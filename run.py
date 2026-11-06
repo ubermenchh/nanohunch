@@ -1,9 +1,11 @@
 # Run cell by cell in the editor ("# %%" cells), or all at once: uv run python run.py
 # %% Settings and the base model (B0 = the model before any training)
+import pickle
 import random
 import sys
 import time
 from math import comb
+from pathlib import Path
 
 import mlx.core as mx
 import numpy as np
@@ -68,6 +70,10 @@ mx.savez("adapter.npz", **dict(tree_flatten(model.trainable_parameters())))
 # %% Trained model: the same steps
 tr_val = {name: collect(logits_fn, items) for name, items in val.items()}
 T_tr = fit_temperature(collect(logits_fn, cal))
+# Save the logits, so confidence intervals (analyze.py) can be computed without running the model again.
+Path("runs").mkdir(exist_ok=True)
+with open("runs/cases.pkl", "wb") as f:
+    pickle.dump(dict(b0=b0_val, trained=tr_val, T_b0=T_b0, T_trained=T_tr), f)
 print(f"trained temperature {T_tr:.3f}")
 
 # %% Report. Keep rule, written before looking: keep a temperature if ECE on validation falls and NLL does not rise.

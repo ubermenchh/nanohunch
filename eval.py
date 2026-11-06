@@ -52,3 +52,29 @@ def fit_temperature(cases, grid=np.geomspace(0.1, 10, 200)) -> float:
     if best in (0, len(grid) - 1): # best value on the edge means the search range is wrong, or the data is
         raise ValueError(f"temperature on the search edge: {grid[best]:.3f}")
     return float(grid[best])
+
+def item_stats(cases, temp: float = 1.0) -> dict:
+    # one num per question: hit, loss (NLL), top confidence, 
+    # and whether the answer changed with the order
+    ps = [pool(perms, zs, temp) for perms, zs, _ in cases]
+    gold = [g for _, _, g in cases]
+    return dict(
+        hit=np.array([p.argmax() == g for p, g in zip(ps, gold, strict=True)], dtype=float),
+        nll=np.array([-np.log(max(p[g], 1e-12)) for p, g in zip(ps, gold, strict=True)]),
+        conf=np.array([p.max() for p in ps]),
+        flip=np.array(
+            [len({int(pool([pm], [z], temp).argmax()) for pm, z in zip(pr, zs, strict=True)}) > 1 for pr, zs, _ in cases],
+            dtype=float,
+        ),
+    )
+
+def bootstrap_diff(a: dict, b: dict, key: str, n: int = 2000, seed: int = 0) -> tuple[float, float, float]:
+    rng = np.random.default_rng(seed)
+
+    def stat(s, i):
+        return ece(s["conf"][i], s["hit"][i]) if key == "ece" else s[key][i].mean()
+
+    size = len(a["hit"])
+    diffs = [stat(b, i) - stat(a, i) for i in (rng.integers(0, size, size) for _ in range(n))]
+    lo, hi = np.percentile(diffs, [2.5, 97.5])
+    return float(stat(b, slice(None)) - stat(a, slice(None))), float(lo), float(hi)
