@@ -13,7 +13,7 @@ from mlx.utils import tree_flatten
 
 import wandb
 from data import encode, load_items
-from eval import collect, ece, fit_temperature, pool
+from eval import collect, ece, fit_temperature, item_stats, pool
 from model import add_lora, answer_logits, load_model
 from train import train
 
@@ -24,12 +24,14 @@ def arg(name, default):  # e.g. --seed 1
     return int(sys.argv[sys.argv.index(name) + 1]) if name in sys.argv else default
 
 
+HARD = "--hard" in sys.argv  # train on the questions the base model finds hardest, out of a pool
 SEED = arg("--seed", 0)  # changes the LoRA start, the order of the training questions and the option shuffles
 MODEL = "Qwen/Qwen3-4B-Base"
 N_TRAIN, N_EVAL, N_CAL = (6, 4, 30) if SMALL else (arg("--n", 900), 250, 200)  # questions per dataset
 LR, RANK, ALPHA, LAYERS = 5e-5, 8, 160, 8
 # TAG names the saved files, so runs with different settings do not overwrite each other
-TAG = f"n{N_TRAIN}" + (f"_s{SEED}" if SEED else "")
+POOL = 20 if SMALL else 900  # with --hard: the hardest N_TRAIN of the first POOL train questions per dataset
+TAG = f"n{N_TRAIN}" + ("_hard" if HARD else "") + (f"_s{SEED}" if SEED else "")
 DATASETS = ("boolq", "arc", "csqa")
 
 wandb.init(
@@ -45,6 +47,7 @@ wandb.init(
         rank=RANK,
         alpha=ALPHA,
         layers=LAYERS,
+        hard=HARD,
     ),
 )
 model, tok = load_model(MODEL)
@@ -69,7 +72,7 @@ def metrics(cases, temp=1.0):
 # %% Data. Calibration questions come from the train split AFTER the ones used for training,
 # so the temperature is never fitted on a training question or on a validation question.
 val = {name: load_items(name, "validation", N_EVAL) for name in DATASETS}
-cal = [it for name in DATASETS for it in load_items(name, "train", N_CAL, skip=N_TRAIN)]
+cal = [it for name in DATASETS for it in load_items(name, "train", N_CAL, skip=POOL if HARD else N_TRAIN)]
 train_items = [it for name in DATASETS for it in load_items(name, "train", N_TRAIN)]
 random.Random(SEED).shuffle(train_items)
 
@@ -77,6 +80,18 @@ random.Random(SEED).shuffle(train_items)
 b0_val = {name: collect(logits_fn, items) for name, items in val.items()}
 T_b0 = fit_temperature(collect(logits_fn, cal))
 print(f"B0 temperature {T_b0:.3f}")
+
+# %% With --hard: keep the questions where B0 has the highest loss (the pool is disjoint from the calibration questions)
+if HARD:
+    train_items = []
+    for name in DATASETS:
+        items = load_items(name, "train", POOL)
+        nll = item_stats(collect(logits_fn, items))["nll"]
+        train_items += [items[i] for i in np.argsort(-nll)[:N_TRAIN]]
+        print(
+            f"{name}: B0 loss on the pool {nll.mean():.3f}, on the {N_TRAIN} kept {np.sort(nll)[-N_TRAIN:].mean():.3f}"
+        )
+    random.Random(SEED).shuffle(train_items)
 
 # %% Train the LoRA on public train sets, option order shuffled each time
 mx.random.seed(SEED)  # the LoRA starts from the same random weights on every run
