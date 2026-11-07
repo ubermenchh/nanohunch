@@ -16,16 +16,18 @@ class LoRALinear(nn.Module):
         self.scale = alpha / rank
 
     def __call__(self, x: mx.array) -> mx.array:
-        return self.linear(x) + self.scale * (x @ self.lora_a) @ self.lora_b
+        return self.linear(x) + (self.scale * (x @ self.lora_a) @ self.lora_b).astype(x.dtype)
 
 def load_model(path: str):
     return load(path) # (model, tokenizer)
 
-def add_lora(model, rank: int, alpha: float, num_layers: int, targets=("q_proj", "v_proj")):
+def add_lora(model, rank: int, alpha: float, num_layers: int, targets=("self_attn.q_proj", "self_attn.v_proj")):
     model.freeze()
     for layer in model.layers[-num_layers:]:
-        for name in targets:
-            setattr(layer.self_attn, name, LoRALinear(getattr(layer.self_attn, name), rank, alpha))
+        for path in targets:
+            block, name = path.split(".") # mlp.gate_proj -> layer.mlp.gate_proj
+            parent = getattr(layer, block)
+            setattr(parent, name, LoRALinear(getattr(parent, name), rank, alpha))
 
 def answer_logits(model, ids: list[int], label_ids: list[int]) -> mx.array:
     h = model.model(mx.array(ids)[None])[0, -1]

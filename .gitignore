@@ -21,3 +21,5 @@ runs_log_alpha160.txt
 runs_log*.txt
 runs_watch.log
 adapter_*.npz
+data_cache/
+adapter_*.json

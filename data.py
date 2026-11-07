@@ -1,4 +1,8 @@
+import json
+import random
+import urllib.request
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 from datasets import load_dataset
 
@@ -30,6 +34,41 @@ def from_boolq(row: dict) -> Item:
 def from_arc(row: dict) -> Item:
     c = row["choices"]
     return Item(row["question"], "Which option is correct?", tuple(c["text"]), c["label"].index(row["answerKey"]))
+
+def from_jev(state, q: dict, answer) -> Item:
+    # One Jev-style question. 
+    # choice: criteria = {id: text}. noul: yes/no.
+    # score: criteria = levels, lowest first.
+    crit = q.get("criteria") or {}
+    if q["type"] == "noul":
+        ids = ["true", "false"]
+        texts = [crit.get(k) or f"The proposition is {k}." for k in ids] 
+        answer = "true" if answer in (True, "yes", "true") else "false"
+    elif q["type"] == "choice":
+        ids, texts = list(crit), [t or k for k, t in crit.items()]
+    else:
+        ids, texts = [str(i) for i in range(len(crit))], list(crit)
+    state = state if isinstance(state, str) else json.dumps(state, ensure_ascii=False)
+    options = tuple(f"{k}: {t}" for k, t in zip(ids, texts, strict=True))
+    return Item(state, q["instructions"], options, ids.index(str(answer)))
+
+# Teacher-written decision questions from github.com/Mapika/decider (Apache-2.0).
+DECIDER = "https://raw.githubusercontent.com/Mapika/decider/91b6fa9b94ab6c4dc2c63d3b14d413243b4fffcc/teacher_data/"
+
+def load_decider(name: str, n: int, seed: int = 0, skip: int = 0) -> list[Item]:
+    path = Path("data_cache") / name
+    if not path.exists():
+        path.parent.mkdir(exist_ok=True)
+        urllib.request.urlretrieve(DECIDER + name, path)
+    items = [
+        from_jev(row["state"], q, q["answer"])
+        for line in open(path)
+        for row in [json.loads(line)]
+        for q in row["questions"]
+        if q.get("teacher_ok", True) and q.get("teacher_p", 1.0) >= 0.5
+    ]
+    random.Random(seed).shuffle(items)
+    return items[skip:skip+n]
 
 SOURCES = {
     "boolq": ("google/boolq", None, from_boolq),
