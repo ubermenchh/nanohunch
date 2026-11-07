@@ -80,11 +80,27 @@ model with its own temperature:
 - Accuracy stays within noise of B0 in all three runs. The limit is the labels and the task, not the amount
   of training or the step size.
 
+**Training on the hardest questions did not help either** (`run.py --hard`). From the first 900 train
+questions of each dataset it keeps the 350 where the base model has the highest loss. Two seeds, each minus B0,
+all 750 validation questions, each model with its own temperature:
+
+| Seed | Accuracy | NLL | Flip rate | CSQA accuracy |
+|---|---|---|---|---|
+| 0 | +.008 [.000, +.017] | +.015 [-.005, +.037] | -.011 [-.032, +.011] | +.028 [+.004, +.052] |
+| 1 | +.003 [-.011, +.016] | +.035 [+.003, +.070] | -.027 [-.049, -.007] | +.016 [-.016, +.048] |
+
+- Seed 0 alone looked like a gain on CSQA (7 questions fixed, 1 broken). Seed 1 does not repeat it, so the
+  gain is within the seed noise.
+- Calibration gets worse in both seeds, mostly on BoolQ (NLL +.05, ECE +.06 and more). The hardest BoolQ
+  questions probably carry noisy labels, so the model learns to be over-confident. The fitted temperature
+  moves between seeds (.529 and .401).
+- The CSQA flip rate falls (.260 and .240), but that is inside the range of the random-350 seeds (.248 to .312).
+
 **About "RLCD".** Open models that use the name (Laya, eve-rlcd, von and others) do not show reinforcement
 learning beating supervised cross-entropy plus temperature scaling. Laya's own ablation found no gain
 from the RL term. So this repo has no RL stage.
 
-**Limits.** Three training seeds at 350 questions, one at 900 and one at learning rate 2e-4. The bootstrap
+**Limits.** Three training seeds at 350 questions, two with `--hard`, one at 900 and one at learning rate 2e-4. The bootstrap
 covers the choice of questions, not the training seed, so it understates the real uncertainty.
 ECE with 10 bins is biased on 250 questions, so NLL is the cleaner number. One temperature is fitted
 across datasets that have 2, 4 and 5 options. The public datasets are easy for this model, so there is
