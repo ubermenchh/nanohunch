@@ -55,7 +55,7 @@ def from_jev(state, q: dict, answer) -> Item:
 # Teacher-written decision questions from github.com/Mapika/decider (Apache-2.0).
 DECIDER = "https://raw.githubusercontent.com/Mapika/decider/91b6fa9b94ab6c4dc2c63d3b14d413243b4fffcc/teacher_data/"
 
-def load_decider(name: str, n: int, seed: int = 0, skip: int = 0) -> list[Item]:
+def load_decider(name: str, n: int, seed: int = 0, skip: int = 0, hard: bool | None = None) -> list[Item]:
     path = Path("data_cache") / name
     if not path.exists():
         path.parent.mkdir(exist_ok=True)
@@ -66,6 +66,7 @@ def load_decider(name: str, n: int, seed: int = 0, skip: int = 0) -> list[Item]:
         for row in [json.loads(line)]
         for q in row["questions"]
         if q.get("teacher_ok", True) and q.get("teacher_p", 1.0) >= 0.5
+        if q.get("teacher_p", 1.0) >= 0.5 and (hard is None or (q["teacher_p"] < 0.8) == hard)
     ]
     random.Random(seed).shuffle(items)
     return items[skip:skip+n]
