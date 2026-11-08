@@ -52,7 +52,7 @@ with open(OUT, "w") as f:
         item = from_jev(row["state"], row["question"], row["expected"])
         ids = [o.split(":")[0] for o in item.options]
         z = np.array(answer_logits(model, *encode(tok, item)), dtype=np.float64)
-        z = z / CFG["temp"]
+        z = z / CFG.get("temp_by_type", {}).get(row["question"]["type"], CFG["temp"])
         p = np.exp(z - z.max())
         f.write(json.dumps({"id": row["id"], "probs": to_probs(row, ids, p / p.sum())}) + "\n")
         if i % 200 == 0:

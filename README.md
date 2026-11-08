@@ -1,7 +1,7 @@
 # nanohunch
 
-A small System One model. Qwen3-4B-Base reads a text state and one typed question
-(Choice or yes/no) and returns a calibrated probability for each answer, not text.
+A small System One model. A Qwen3-4B model reads a text state and one typed question
+(choice, yes/no or score) and returns a calibrated probability for each answer, not text.
 
 Everything is written by hand in MLX on an Apple Silicon Mac: label-token readout, LoRA,
 restricted softmax cross-entropy, option-order shuffling, temperature scaling.
@@ -12,12 +12,52 @@ restricted softmax cross-entropy, option-order shuffling, temperature scaling.
 | `data.py` | Question to prompt, option shuffling with the gold remap, public datasets (BoolQ, ARC, CSQA) |
 | `train.py` | Loss over the answer labels and the training loop |
 | `eval.py` | Pooling over option orders, accuracy, flip rate, ECE, temperature fit |
-| `run.py` | The whole experiment in `# %%` cells: base model, train, calibrate, report |
+| `run.py` | The public-data experiment in `# %%` cells: base model, train, calibrate, report |
+| `run_decider.py` | Train on decision-shaped questions (decider's teacher data) plus public replay |
+| `od.py` | Score a model or adapter on OpenDecisions, one pass per question |
+| `refit_temp.py`, `retemp.py` | Fit one temperature per question type on harder held-out questions; rescale saved predictions |
 
-Run it with `uv run python run.py` (add `--small` for a quick check, `--seed S` and `--n N` to change the seed and
+Run the public-data experiment with `uv run python run.py` (add `--small` for a quick check, `--seed S` and `--n N` to change the seed and
 the number of training questions per dataset). It logs to wandb.
 
-## Results
+## Results on OpenDecisions
+
+[OpenDecisions](https://huggingface.co/datasets/jgeuter/OpenDecisions) holds 2,352 held-out decision questions
+(choice, yes/no, score). It is never trained on, and no temperature is fitted on it. Capability is the dataset's own
+`score.py`: (Intelligence + Calibration) / 2. Its authors say differences under 2 points are not significant.
+
+| Model | Capability | Intelligence | Calibration | choice | yes/no | score |
+|---|---|---|---|---|---|---|
+| Qwen3-4B-Base, no training | 53.1 | 26.3 | 80.0 | 55.4% | 68.9% | 40.8% |
+| Base + LoRA on BoolQ/ARC/CSQA (n900) | 51.4 | 24.4 | 78.4 | 55.5% | 67.6% | 40.3% |
+| Qwen3-4B-Instruct-2507, no training | 35.4 | 31.0 | 39.8 | 62.4% | 69.6% | 45.7% |
+| Instruct + decider data, 4,000 q, seed 0 | 56.7 | 42.8 | 70.7 | 68.3% | 74.4% | 57.1% |
+| Instruct + decider data, 4,000 q, seed 1 | 54.1 | 40.3 | 67.8 | 67.3% | 73.0% | 53.9% |
+| Instruct + decider data, 12,000 q, seed 0 | 55.0 | 43.2 | 66.8 | 68.9% | 75.1% | 54.8% |
+
+The last three rows use one temperature per question type. Setup: Instruct start, LoRA (rank 16, alpha 32) on all seven
+projections of all 36 layers, learning rate 1e-4 with warmup and cosine decay, 32 questions per step, one pass over the
+decider teacher questions (Apache-2.0, pinned commit) plus 810 public questions as replay.
+
+- **The training data was the problem, not the method.** Training on public gold questions never moved
+  OpenDecisions accuracy (all three adapters within 1.3 points of the base model). Training on decision-shaped
+  questions raises accuracy by 3 to 11 points over untrained Instruct, in both seeds.
+- **Untrained Instruct is better than Base on accuracy but badly overconfident** (Calibration 39.8), so its
+  Capability is lower than Base. Temperature fitted on decider questions fixes most of that.
+- **The temperature must come from harder questions.** Fitted on random held-out decider questions (median teacher
+  probability .95), the temperature is below 1 (.75) and seed 0 scores Capability 50.1. Fitted on held-out
+  questions with teacher probability under .8, it is above 1 (1.11) and the same predictions score 54.8
+  (seed 1: 52.9, only scored this way). One temperature per question type adds about 1.5 points more in both
+  seeds. I chose this recipe after seeing the first OpenDecisions score, so treat the gain as optimistic.
+- **Three times more data did not help.** 12,000 questions give 55.0 against 56.7 and 54.1 at 4,000. Accuracy
+  is flat, calibration is a little worse, and the final training loss is 0.025, which looks like over-fitting to
+  the easy questions.
+- **The two seeds at 4,000 questions differ by 2.6 points**, as much as most of the differences above.
+  Everything here is one or two runs, so only the large gains (Intelligence +9 to +12 over untrained Instruct) are solid.
+- **Still behind on calibration:** 67 to 71 against 80 for the base model. Capability is 1 to 4 points above
+  the base model, which is inside the noise.
+
+## Results on the public datasets
 
 Setup: Qwen3-4B-Base, LoRA (rank 8, alpha 160, 8 layers, lr 5e-5), trained on 1,050 public gold questions
 (350 each from BoolQ, ARC-Challenge and CommonsenseQA train splits) with the option order shuffled each time.
@@ -77,8 +117,8 @@ model with its own temperature:
   `train/loss_avg30` in wandb, not the raw curve.
 - At 2e-4 the answers change more with the option order (flip rate .088 to .176 on BoolQ). The loss
   fell a little during training, but validation did not follow, so training loss is not a good signal here.
-- Accuracy stays within noise of B0 in all three runs. The limit is the labels and the task, not the amount
-  of training or the step size.
+- Accuracy stays within noise of B0 in all three runs. More public data or a different step size did not help.
+  The OpenDecisions results above show why: the public questions are not decision-shaped.
 
 **Training on the hardest questions did not help either** (`run.py --hard`). From the first 900 train
 questions of each dataset it keeps the 350 where the base model has the highest loss. Two seeds, each minus B0,
@@ -100,7 +140,7 @@ all 750 validation questions, each model with its own temperature:
 learning beating supervised cross-entropy plus temperature scaling. Laya's own ablation found no gain
 from the RL term. So this repo has no RL stage.
 
-**Limits.** Three training seeds at 350 questions, two with `--hard`, one at 900 and one at learning rate 2e-4. The bootstrap
+**Limits.** On the public data: three training seeds at 350 questions, two with `--hard`, one at 900 and one at learning rate 2e-4. The bootstrap
 covers the choice of questions, not the training seed, so it understates the real uncertainty.
 ECE with 10 bins is biased on 250 questions, so NLL is the cleaner number. One temperature is fitted
 across datasets that have 2, 4 and 5 options. The public datasets are easy for this model, so there is
