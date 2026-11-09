@@ -20,6 +20,9 @@ restricted softmax cross-entropy, option-order shuffling, temperature scaling.
 Run the public-data experiment with `uv run python run.py` (add `--small` for a quick check, `--seed S` and `--n N` to change the seed and
 the number of training questions per dataset). It logs to wandb.
 
+The best adapter (4,000 decider questions, seed 0) is at
+[huggingface.co/ubermenchh/nanohunch-decider-4b](https://huggingface.co/ubermenchh/nanohunch-decider-4b).
+
 ## Results on OpenDecisions
 
 [OpenDecisions](https://huggingface.co/datasets/jgeuter/OpenDecisions) holds 2,352 held-out decision questions
