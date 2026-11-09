@@ -20,7 +20,7 @@ restricted softmax cross-entropy, option-order shuffling, temperature scaling.
 Run the public-data experiment with `uv run python run.py` (add `--small` for a quick check, `--seed S` and `--n N` to change the seed and
 the number of training questions per dataset). It logs to wandb.
 
-The best adapter (4,000 decider questions, seed 0) is at
+The adapter from the best-scoring seed (4,000 decider questions, seed 0; the mean of four seeds is 52.9) is at
 [huggingface.co/ubermenchh/nanohunch-decider-4b](https://huggingface.co/ubermenchh/nanohunch-decider-4b).
 
 ## Results on OpenDecisions
@@ -36,6 +36,8 @@ The best adapter (4,000 decider questions, seed 0) is at
 | Qwen3-4B-Instruct-2507, no training | 35.4 | 31.0 | 39.8 | 62.4% | 69.6% | 45.7% |
 | Instruct + decider data, 4,000 q, seed 0 | 56.7 | 42.8 | 70.7 | 68.3% | 74.4% | 57.1% |
 | Instruct + decider data, 4,000 q, seed 1 | 54.1 | 40.3 | 67.8 | 67.3% | 73.0% | 53.9% |
+| Instruct + decider data, 4,000 q, seed 2 | 48.5 | 36.7 | 60.3 | 66.6% | 71.8% | 50.3% |
+| Instruct + decider data, 4,000 q, seed 3 | 52.2 | 39.6 | 64.8 | 67.1% | 73.7% | 51.0% |
 | Instruct + decider data, 12,000 q, seed 0 | 55.0 | 43.2 | 66.8 | 68.9% | 75.1% | 54.8% |
 | Instruct + only the hard decider q, 1,850 q, seed 0 (one temperature) | 51.4 | 40.6 | 62.2 | 66.0% | 75.1% | 54.1% |
 | Instruct + 2,000 teacher q + 2,000 rule q, seed 0 | 54.2 | 40.1 | 68.3 | 67.8% | 72.0% | 57.8% |
@@ -46,7 +48,7 @@ decider teacher questions (Apache-2.0, pinned commit) plus 810 public questions 
 
 - **The training data was the problem, not the method.** Training on public gold questions never moved
   OpenDecisions accuracy (all three adapters within 1.3 points of the base model). Training on decision-shaped
-  questions raises accuracy by 3 to 11 points over untrained Instruct, in both seeds.
+  questions raises accuracy by 3 to 11 points over untrained Instruct, in all four seeds.
 - **Untrained Instruct is better than Base on accuracy but badly overconfident** (Calibration 39.8), so its
   Capability is lower than Base. Temperature fitted on decider questions fixes most of that.
 - **The temperature must come from harder questions.** Fitted on random held-out decider questions (median teacher
@@ -66,10 +68,13 @@ decider teacher questions (Apache-2.0, pinned commit) plus 810 public questions 
 - **Rule-based questions added nothing measurable** (`make_rules.py` builds decider's programmatic rule-reading
   questions: a record, a rule, the answer computed; 0 of 20,000 share a 13-word run with OpenDecisions). Half the
   4,000 questions from this set: Capability 54.2 against 56.7 for the teacher-only run, yes/no accuracy 2.4 points
-  lower, score questions 0.7 higher. That sits inside the 2.6-point gap between the two teacher-only seeds, and
+  lower, score questions 0.7 higher. That sits inside the 8-point spread between the four teacher-only seeds, and
   half as many teacher questions were used, so it does not separate "no gain" from "a small loss".
-- **The two seeds at 4,000 questions differ by 2.6 points**, as much as most of the differences above.
-  Everything here is one or two runs, so only the large gains (Intelligence +9 to +12 over untrained Instruct) are solid.
+- **Four seeds of the same recipe score 56.7, 54.1, 48.5 and 52.2** (mean 52.9, range 8.2). Accuracy hardly moves between
+  seeds (choice 66.6 to 68.3%); Calibration does (60.3 to 70.7). Seed 0's 56.7 was a lucky draw, and no recipe difference
+  above (12k questions, hard-only, rules) is larger than this spread. The mean is level with the untrained base model (53.1).
+  Only the accuracy gain over untrained Instruct (Intelligence +9 to +12) is solid. Seeds 0, 2, 3 use per-type temperatures
+  fitted on 300 hard held-out questions per type; seed 1 was rescaled offline.
 - **Still behind on calibration:** 67 to 71 against 80 for the base model. Capability is 1 to 4 points above
   the base model, which is inside the noise.
 
