@@ -1,6 +1,7 @@
 # Train on decision-shaped questions (decider's teacher data) plus a little public replay, then score on OpenDecisions
-# with od.py. Run: uv run python run_decider.py [--small] [--n 4000] [--seed S] [--lr 1e-4] [--hard]
+# with od.py. Run: uv run python run_decider.py [--small] [--n 4000] [--seed S] [--lr 1e-4] [--hard] [--rules]
 # --hard: train only on the questions where the teacher was unsure (teacher_p < .8) and fit the one temperature on others like them.
+# --rules: half of the N questions come from make_rules.py (rule-conditioned decisions), half from the teacher file.
 # Start: the instruct checkpoint. LoRA on all 7 projections of all layers, alpha/rank = 2, warmup + cosine decay.
 import json
 import random
@@ -25,13 +26,14 @@ def arg(name, default):  # e.g. --seed 1
 
 SMALL = "--small" in sys.argv
 HARD = "--hard" in sys.argv
+RULES = "--rules" in sys.argv
 SEED, N, LR = arg("--seed", 0), arg("--n", 1850 if HARD else 4000), arg("--lr", 1e-4)
 MODEL = arg("--model", "Qwen/Qwen3-4B-Instruct-2507")
 RANK, ALPHA, ACCUM, REPLAY, N_CAL = 16, 32, 32, 270, 300  # REPLAY: public questions per dataset
 TARGETS = [f"self_attn.{p}_proj" for p in "qkvo"] + [f"mlp.{p}_proj" for p in ("gate", "up", "down")]
 if SMALL:
     N, REPLAY, N_CAL, ACCUM = 64, 4, 20, 8
-TAG = f"decider{'_hard' if HARD else ''}_n{N}" + (f"_s{SEED}" if SEED else "")
+TAG = f"decider{'_hard' if HARD else ''}{'_rules' if RULES else ''}_n{N}" + (f"_s{SEED}" if SEED else "")
 FILE = "custom_questions.jsonl"
 
 steps = (N + 3 * REPLAY) // ACCUM
@@ -43,14 +45,15 @@ wandb.init(
     project="nanohunch",
     mode="disabled" if SMALL else "online",
     name=TAG,
-    config=dict(model=MODEL, hard=HARD, n=N, replay=REPLAY, lr=LR, seed=SEED, rank=RANK, alpha=ALPHA, accum=ACCUM, steps=steps),
+    config=dict(model=MODEL, hard=HARD, rules=RULES, n=N, replay=REPLAY, lr=LR, seed=SEED, rank=RANK, alpha=ALPHA, accum=ACCUM, steps=steps),
 )
 model, tok = load_model(MODEL)
 
 # The temperature is fitted on decider questions after the training ones, never on OpenDecisions.
 hard = True if HARD else None  # None: both easy and hard questions
-cal = load_decider(FILE, N_CAL, skip=N, hard=hard)
-items = load_decider(FILE, N, hard=hard) + [it for d in ("boolq", "arc", "csqa") for it in load_items(d, "train", REPLAY)]
+N_TEACHER = N // 2 if RULES else N
+cal = load_decider(FILE, N_CAL, skip=N_TEACHER, hard=hard)
+items = load_decider(FILE, N_TEACHER, hard=hard) + (load_decider("rules.jsonl", N - N_TEACHER) if RULES else []) + [it for d in ("boolq", "arc", "csqa") for it in load_items(d, "train", REPLAY)]
 random.Random(SEED).shuffle(items)
 
 mx.random.seed(SEED)

@@ -38,8 +38,9 @@ The best adapter (4,000 decider questions, seed 0) is at
 | Instruct + decider data, 4,000 q, seed 1 | 54.1 | 40.3 | 67.8 | 67.3% | 73.0% | 53.9% |
 | Instruct + decider data, 12,000 q, seed 0 | 55.0 | 43.2 | 66.8 | 68.9% | 75.1% | 54.8% |
 | Instruct + only the hard decider q, 1,850 q, seed 0 (one temperature) | 51.4 | 40.6 | 62.2 | 66.0% | 75.1% | 54.1% |
+| Instruct + 2,000 teacher q + 2,000 rule q, seed 0 | 54.2 | 40.1 | 68.3 | 67.8% | 72.0% | 57.8% |
 
-The three rows above the last use one temperature per question type. Setup: Instruct start, LoRA (rank 16, alpha 32) on all seven
+All decider rows use one temperature per question type, except the hard-question row (one temperature). Setup: Instruct start, LoRA (rank 16, alpha 32) on all seven
 projections of all 36 layers, learning rate 1e-4 with warmup and cosine decay, 32 questions per step, one pass over the
 decider teacher questions (Apache-2.0, pinned commit) plus 810 public questions as replay.
 
@@ -62,6 +63,11 @@ decider teacher questions (Apache-2.0, pinned commit) plus 810 public questions 
   lowest of the decider runs. The fitted temperature (.90) is far below the 1.1 to 1.7 the other runs needed, so the
   held-out hard decider questions do not look like OpenDecisions. These questions may also have noisier labels
   (the teacher was unsure), as with the hardest BoolQ questions, so this does not show that harder data cannot help.
+- **Rule-based questions added nothing measurable** (`make_rules.py` builds decider's programmatic rule-reading
+  questions: a record, a rule, the answer computed; 0 of 20,000 share a 13-word run with OpenDecisions). Half the
+  4,000 questions from this set: Capability 54.2 against 56.7 for the teacher-only run, yes/no accuracy 2.4 points
+  lower, score questions 0.7 higher. That sits inside the 2.6-point gap between the two teacher-only seeds, and
+  half as many teacher questions were used, so it does not separate "no gain" from "a small loss".
 - **The two seeds at 4,000 questions differ by 2.6 points**, as much as most of the differences above.
   Everything here is one or two runs, so only the large gains (Intelligence +9 to +12 over untrained Instruct) are solid.
 - **Still behind on calibration:** 67 to 71 against 80 for the base model. Capability is 1 to 4 points above
