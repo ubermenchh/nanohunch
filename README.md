@@ -1,4 +1,4 @@
-# nanohunch
+<p align="center"><img src="assets/banner.png" width="100%" alt="nanohunch: a tiny model with good hunches. A hamster in a wizard hat reads three probability bars, A, B and C, in a crystal ball."></p>
 
 A small "System One" decision model, written by hand in MLX. Qwen3-4B plus a LoRA adapter reads a text state and one typed
 question (choice, yes/no or score) and returns a calibrated probability for each answer, not text. The probabilities come
