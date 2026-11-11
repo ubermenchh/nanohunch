@@ -13,14 +13,14 @@ restricted softmax cross-entropy, option-order shuffling, temperature scaling.
 | `train.py` | Loss over the answer labels and the training loop |
 | `eval.py` | Pooling over option orders, accuracy, flip rate, ECE, temperature fit |
 | `run.py` | The public-data experiment in `# %%` cells: base model, train, calibrate, report |
-| `run_decider.py` | Train on decision-shaped questions (decider's teacher data) plus public replay |
+| `run_decider.py` | Train on decision-shaped questions (decider's teacher data, hard or soft targets) plus public replay |
 | `od.py` | Score a model or adapter on OpenDecisions, one pass per question |
 | `refit_temp.py`, `retemp.py` | Fit one temperature per question type on harder held-out questions; rescale saved predictions |
 
 Run the public-data experiment with `uv run python run.py` (add `--small` for a quick check, `--seed S` and `--n N` to change the seed and
 the number of training questions per dataset). It logs to wandb.
 
-The adapter from the best-scoring seed (4,000 decider questions, seed 0; the mean of four seeds is 52.9) is at
+The adapter (4,000 decider questions, soft targets, seed 0: the middle of four seeds, mean 54.2) is at
 [huggingface.co/ubermenchh/nanohunch-decider-4b](https://huggingface.co/ubermenchh/nanohunch-decider-4b).
 
 ## Results on OpenDecisions
@@ -38,6 +38,10 @@ The adapter from the best-scoring seed (4,000 decider questions, seed 0; the mea
 | Instruct + decider data, 4,000 q, seed 1 | 54.1 | 40.3 | 67.8 | 67.3% | 73.0% | 53.9% |
 | Instruct + decider data, 4,000 q, seed 2 | 48.5 | 36.7 | 60.3 | 66.6% | 71.8% | 50.3% |
 | Instruct + decider data, 4,000 q, seed 3 | 52.2 | 39.6 | 64.8 | 67.1% | 73.7% | 51.0% |
+| Instruct + decider data, 4,000 q, soft targets, seed 0 (Modal) | 54.6 | 40.5 | 68.8 | 68.3% | 73.2% | 54.1% |
+| Instruct + decider data, 4,000 q, soft targets, seed 1 (Modal) | 55.7 | 43.2 | 68.1 | 68.9% | 75.1% | 55.3% |
+| Instruct + decider data, 4,000 q, soft targets, seed 2 | 52.0 | 39.7 | 64.3 | 66.8% | 73.4% | 56.0% |
+| Instruct + decider data, 4,000 q, soft targets, seed 3 | 54.3 | 40.7 | 67.9 | 66.6% | 74.2% | 53.1% |
 | Instruct + decider data, 12,000 q, seed 0 | 55.0 | 43.2 | 66.8 | 68.9% | 75.1% | 54.8% |
 | Instruct + only the hard decider q, 1,850 q, seed 0 (one temperature) | 51.4 | 40.6 | 62.2 | 66.0% | 75.1% | 54.1% |
 | Instruct + 2,000 teacher q + 2,000 rule q, seed 0 | 54.2 | 40.1 | 68.3 | 67.8% | 72.0% | 57.8% |
@@ -75,6 +79,13 @@ decider teacher questions (Apache-2.0, pinned commit) plus 810 public questions 
   above (12k questions, hard-only, rules) is larger than this spread. The mean is level with the untrained base model (53.1).
   Only the accuracy gain over untrained Instruct (Intelligence +9 to +12) is solid. Seeds 0, 2, 3 use per-type temperatures
   fitted on 300 hard held-out questions per type; seed 1 was rescaled offline.
+- **Soft targets make the seeds agree more.** `run_decider.py --soft` trains toward the teacher's own probability
+  (`teacher_p` on the gold option, the rest spread evenly) instead of a hard label. Four seeds score 54.6, 55.7, 52.0 and
+  54.3 (mean 54.2, std 1.6), against 56.3, 54.0, 48.3 and 52.6 for hard labels (mean 52.8, std 3.4; the hard-label scores here
+  use the larger temperature fit, `refit_temp.py --m 1000`, which moved each by 0.5 or less). The mean gain, +1.4, is inside
+  the 2-point noise level and seed 0 went down; the clearer effect is the worst seed (48.3 to 52.0) and the spread (8.0 to 3.7).
+  Seeds 0 and 1 were trained on Modal H100s with MLX's CUDA backend and seeds 2 and 3 on the Mac, so the comparison mixes two
+  platforms. Averaging the predictions of the four hard-label seeds scored 55.9.
 - **Still behind on calibration:** 67 to 71 against 80 for the base model. Capability is 1 to 4 points above
   the base model, which is inside the noise.
 

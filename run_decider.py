@@ -2,11 +2,13 @@
 # with od.py. Run: uv run python run_decider.py [--small] [--n 4000] [--seed S] [--lr 1e-4] [--hard] [--rules]
 # --hard: train only on the questions where the teacher was unsure (teacher_p < .8) and fit the one temperature on others like them.
 # --rules: half of the N questions come from make_rules.py (rule-conditioned decisions), half from the teacher file.
+# --soft: train toward the teacher's probability (p on the gold option, the rest spread evenly) instead of a hard label.
 # Start: the instruct checkpoint. LoRA on all 7 projections of all layers, alpha/rank = 2, warmup + cosine decay.
 import json
 import random
 import sys
 import time
+from dataclasses import replace
 
 import mlx.core as mx
 import mlx.optimizers as optim
@@ -27,13 +29,14 @@ def arg(name, default):  # e.g. --seed 1
 SMALL = "--small" in sys.argv
 HARD = "--hard" in sys.argv
 RULES = "--rules" in sys.argv
+SOFT = "--soft" in sys.argv
 SEED, N, LR = arg("--seed", 0), arg("--n", 1850 if HARD else 4000), arg("--lr", 1e-4)
 MODEL = arg("--model", "Qwen/Qwen3-4B-Instruct-2507")
 RANK, ALPHA, ACCUM, REPLAY, N_CAL = 16, 32, 32, 270, 300  # REPLAY: public questions per dataset
 TARGETS = [f"self_attn.{p}_proj" for p in "qkvo"] + [f"mlp.{p}_proj" for p in ("gate", "up", "down")]
 if SMALL:
     N, REPLAY, N_CAL, ACCUM = 64, 4, 20, 8
-TAG = f"decider{'_hard' if HARD else ''}{'_rules' if RULES else ''}_n{N}" + (f"_s{SEED}" if SEED else "")
+TAG = f"decider{'_hard' if HARD else ''}{'_rules' if RULES else ''}{'_soft' if SOFT else ''}_n{N}" + (f"_s{SEED}" if SEED else "")
 FILE = "custom_questions.jsonl"
 
 steps = (N + 3 * REPLAY) // ACCUM
@@ -43,9 +46,9 @@ schedule = optim.join_schedules(
 )
 wandb.init(
     project="nanohunch",
-    mode="disabled" if SMALL else "online",
+    mode="disabled" if SMALL or "--no-wandb" in sys.argv else "online",
     name=TAG,
-    config=dict(model=MODEL, hard=HARD, rules=RULES, n=N, replay=REPLAY, lr=LR, seed=SEED, rank=RANK, alpha=ALPHA, accum=ACCUM, steps=steps),
+    config=dict(model=MODEL, hard=HARD, rules=RULES, soft=SOFT, n=N, replay=REPLAY, lr=LR, seed=SEED, rank=RANK, alpha=ALPHA, accum=ACCUM, steps=steps),
 )
 model, tok = load_model(MODEL)
 
@@ -54,6 +57,8 @@ hard = True if HARD else None  # None: both easy and hard questions
 N_TEACHER = N // 2 if RULES else N
 cal = load_decider(FILE, N_CAL, skip=N_TEACHER, hard=hard)
 items = load_decider(FILE, N_TEACHER, hard=hard) + (load_decider("rules.jsonl", N - N_TEACHER) if RULES else []) + [it for d in ("boolq", "arc", "csqa") for it in load_items(d, "train", REPLAY)]
+if not SOFT:
+    items = [replace(it, p=1.0) for it in items]
 random.Random(SEED).shuffle(items)
 
 mx.random.seed(SEED)

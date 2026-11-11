@@ -14,6 +14,7 @@ class Item:
     question: str
     options: tuple[str, ...]
     gold: int # index of the correct option in `options`
+    p: float = 1.0 # how sure the teacher was of the gold option
 
 def shuffled(item: Item, perm: tuple[int, ...]) -> Item:
     return replace(item, options=tuple(item.options[i] for i in perm), gold=perm.index(item.gold))
@@ -50,7 +51,7 @@ def from_jev(state, q: dict, answer) -> Item:
         ids, texts = [str(i) for i in range(len(crit))], list(crit)
     state = state if isinstance(state, str) else json.dumps(state, ensure_ascii=False)
     options = tuple(f"{k}: {t}" for k, t in zip(ids, texts, strict=True))
-    return Item(state, q["instructions"], options, ids.index(str(answer)))
+    return Item(state, q["instructions"], options, ids.index(str(answer)), q.get("teacher_p", 1.0))
 
 # Teacher-written decision questions from github.com/Mapika/decider (Apache-2.0).
 DECIDER = "https://raw.githubusercontent.com/Mapika/decider/91b6fa9b94ab6c4dc2c63d3b14d413243b4fffcc/teacher_data/"
