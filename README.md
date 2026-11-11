@@ -86,6 +86,12 @@ decider teacher questions (Apache-2.0, pinned commit) plus 810 public questions 
   the 2-point noise level and seed 0 went down; the clearer effect is the worst seed (48.3 to 52.0) and the spread (8.0 to 3.7).
   Seeds 0 and 1 were trained on Modal H100s with MLX's CUDA backend and seeds 2 and 3 on the Mac, so the comparison mixes two
   platforms. Averaging the predictions of the four hard-label seeds scored 55.9.
+- **More hard questions did not help.** With 1,500 hard (teacher under .8) plus 2,500 easy questions and soft targets,
+  seeds 0 and 1 score 49.5 and 50.6 against 54.6 and 55.7 for the plain soft recipe. Intelligence is the same (39.6 and 38.6
+  against 40.5 and 43.2), accuracy on OpenDecisions' hard tier is 49.6% against 50.8%, and a temperature fitted on
+  held-out decider hard questions came out below 1 and left the model overconfident on OpenDecisions (Calibration 59 to 63
+  against 68). Only 2,152 hard questions exist, so training on them leaves few to fit the temperature on. The flag
+  that did this was removed again.
 - **Still behind on calibration:** 67 to 71 against 80 for the base model. Capability is 1 to 4 points above
   the base model, which is inside the noise.
 
