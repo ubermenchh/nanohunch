@@ -20,7 +20,7 @@ restricted softmax cross-entropy, option-order shuffling, temperature scaling.
 Run the public-data experiment with `uv run python run.py` (add `--small` for a quick check, `--seed S` and `--n N` to change the seed and
 the number of training questions per dataset). It logs to wandb.
 
-The adapter (4,000 decider questions, soft targets, seed 0: the middle of four seeds, mean 54.2) is at
+The adapter (4,000 decider questions, soft targets, no temperature scaling, seed 0: 57.5, the second best of four seeds, mean 57.1) is at
 [huggingface.co/ubermenchh/nanohunch-decider-4b](https://huggingface.co/ubermenchh/nanohunch-decider-4b).
 
 ## Results on OpenDecisions
@@ -42,11 +42,17 @@ The adapter (4,000 decider questions, soft targets, seed 0: the middle of four s
 | Instruct + decider data, 4,000 q, soft targets, seed 1 (Modal) | 55.7 | 43.2 | 68.1 | 68.9% | 75.1% | 55.3% |
 | Instruct + decider data, 4,000 q, soft targets, seed 2 | 52.0 | 39.7 | 64.3 | 66.8% | 73.4% | 56.0% |
 | Instruct + decider data, 4,000 q, soft targets, seed 3 | 54.3 | 40.7 | 67.9 | 66.6% | 74.2% | 53.1% |
+| Instruct + decider data, 4,000 q, soft targets, **temperature 1**, seed 0 (Modal) | 57.5 | 40.3 | 74.6 | 68.3% | 73.2% | 54.1% |
+| Instruct + decider data, 4,000 q, soft targets, **temperature 1**, seed 1 (Modal) | 58.3 | 43.0 | 73.6 | 68.9% | 75.1% | 55.3% |
+| Instruct + decider data, 4,000 q, soft targets, **temperature 1**, seed 2 | 56.0 | 39.3 | 72.7 | 66.8% | 73.4% | 56.0% |
+| Instruct + decider data, 4,000 q, soft targets, **temperature 1**, seed 3 | 56.4 | 40.6 | 72.3 | 66.6% | 74.2% | 53.1% |
+| Qwen3-8B + decider data, 4,000 q, soft targets, temperature 1, seed 0 (Modal) | 55.1 | 41.9 | 68.3 | 68.9% | 72.7% | 57.8% |
+| Qwen3-8B + decider data, 4,000 q, soft targets, temperature 1, seed 1 (Modal) | 57.0 | 42.1 | 71.9 | 68.2% | 74.2% | 57.3% |
 | Instruct + decider data, 12,000 q, seed 0 | 55.0 | 43.2 | 66.8 | 68.9% | 75.1% | 54.8% |
 | Instruct + only the hard decider q, 1,850 q, seed 0 (one temperature) | 51.4 | 40.6 | 62.2 | 66.0% | 75.1% | 54.1% |
 | Instruct + 2,000 teacher q + 2,000 rule q, seed 0 | 54.2 | 40.1 | 68.3 | 67.8% | 72.0% | 57.8% |
 
-All decider rows use one temperature per question type, except the hard-question row (one temperature). Setup: Instruct start, LoRA (rank 16, alpha 32) on all seven
+All decider rows use one temperature per question type unless marked temperature 1, except the hard-question row (one temperature). Setup: Instruct start, LoRA (rank 16, alpha 32) on all seven
 projections of all 36 layers, learning rate 1e-4 with warmup and cosine decay, 32 questions per step, one pass over the
 decider teacher questions (Apache-2.0, pinned commit) plus 810 public questions as replay.
 
@@ -79,21 +85,23 @@ decider teacher questions (Apache-2.0, pinned commit) plus 810 public questions 
   above (12k questions, hard-only, rules) is larger than this spread. The mean is level with the untrained base model (53.1).
   Only the accuracy gain over untrained Instruct (Intelligence +9 to +12) is solid. Seeds 0, 2, 3 use per-type temperatures
   fitted on 300 hard held-out questions per type; seed 1 was rescaled offline.
-- **Soft targets make the seeds agree more.** `run_decider.py --soft` trains toward the teacher's own probability
-  (`teacher_p` on the gold option, the rest spread evenly) instead of a hard label. Four seeds score 54.6, 55.7, 52.0 and
-  54.3 (mean 54.2, std 1.6), against 56.3, 54.0, 48.3 and 52.6 for hard labels (mean 52.8, std 3.4; the hard-label scores here
-  use the larger temperature fit, `refit_temp.py --m 1000`, which moved each by 0.5 or less). The mean gain, +1.4, is inside
-  the 2-point noise level and seed 0 went down; the clearer effect is the worst seed (48.3 to 52.0) and the spread (8.0 to 3.7).
-  Seeds 0 and 1 were trained on Modal H100s with MLX's CUDA backend and seeds 2 and 3 on the Mac, so the comparison mixes two
-  platforms. Averaging the predictions of the four hard-label seeds scored 55.9.
-- **More hard questions did not help.** With 1,500 hard (teacher under .8) plus 2,500 easy questions and soft targets,
-  seeds 0 and 1 score 49.5 and 50.6 against 54.6 and 55.7 for the plain soft recipe. Intelligence is the same (39.6 and 38.6
-  against 40.5 and 43.2), accuracy on OpenDecisions' hard tier is 49.6% against 50.8%, and a temperature fitted on
-  held-out decider hard questions came out below 1 and left the model overconfident on OpenDecisions (Calibration 59 to 63
-  against 68). Only 2,152 hard questions exist, so training on them leaves few to fit the temperature on. The flag
-  that did this was removed again.
-- **Still behind on calibration:** 67 to 71 against 80 for the base model. Capability is 1 to 4 points above
-  the base model, which is inside the noise.
+- **Soft targets train toward the teacher's own probability** (`run_decider.py --soft`: `teacher_p` on the gold option, the rest
+  spread evenly) instead of a hard label. With a fitted temperature, four seeds score 54.6, 55.7, 52.0 and 54.3 (mean 54.2,
+  std 1.6) against 56.3, 54.0, 48.3 and 52.6 for hard labels (mean 52.8, std 3.4): a small gain, but the temperature fit hides
+  most of the effect (next bullet). Seeds 0 and 1 were trained on Modal H100s with MLX's CUDA backend and seeds 2 and 3 on the
+  Mac. Averaging the predictions of the four hard-label seeds scored 55.9.
+- **With soft targets, do not fit a temperature.** The temperature fitted on held-out decider questions came out
+  below 1 for soft-target models (they are under-confident on easy decider questions) and made them over-confident on
+  OpenDecisions. Leaving the probabilities as trained (`od.py --temp 1`) scores 57.5, 58.3, 56.0 and 56.4 on the four 4B seeds
+  (mean 57.1, std 1.0, Calibration 72 to 75), against 52.8 (std 3.4) for hard labels with fitted temperatures. I found this on
+  seeds 0 and 1 and then checked it on seeds 2 and 3, which it also improved (52.0 to 56.0, 54.3 to 56.4). Hard-label models
+  still need the temperature, so the comparison is soft targets without one against hard labels with one.
+- **Qwen3-8B is no better than the 4B.** The same recipe on `Qwen/Qwen3-8B` (seeds 0 and 1, temperature 1) scores 55.1 and
+  57.0 against 57.5 and 58.3 for the 4B; Intelligence is the same (about 42). Model size is not what limits this.
+  (`answer_logits` first read the embedding matrix as the output head, which is right for the 4B but not for the 8B, whose
+  head is separate; the 8B scored at chance until that was fixed.)
+- **Still behind on calibration:** 72 to 75 for the best recipe against 80 for the base model, which is not trained at all and
+  is simply unsure of everything. Capability is about 4 points above the base model (soft targets, temperature 1).
 
 ## Results on the public datasets
 

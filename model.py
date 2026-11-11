@@ -31,4 +31,5 @@ def add_lora(model, rank: int, alpha: float, num_layers: int, targets=("self_att
 
 def answer_logits(model, ids: list[int], label_ids: list[int]) -> mx.array:
     h = model.model(mx.array(ids)[None])[0, -1]
-    return label_logits(h[None], model.model.embed_tokens.weight, mx.array(label_ids))[0]
+    head = model.lm_head.weight if hasattr(model, "lm_head") else model.model.embed_tokens.weight
+    return label_logits(h[None], head, mx.array(label_ids))[0]

@@ -3,6 +3,7 @@
 #   uv run python od.py                                     base model, no training
 #   uv run python od.py --adapter adapter_n900.npz          base model + a LoRA saved by run.py
 #   uv run python od.py --model Qwen/Qwen3-4B-Instruct-2507
+#   uv run python od.py --adapter X.npz --temp 1            ignore the fitted temperatures (right for --soft adapters)
 # One forward pass per question with the options in their given order, as on the OpenDecisions leaderboard.
 import json
 import sys
@@ -25,6 +26,7 @@ ADAPTER = arg("--adapter", None)
 CFG = dict(rank=8, alpha=160, layers=8, targets=["self_attn.q_proj", "self_attn.v_proj"], temp=1.0)
 if ADAPTER and Path(ADAPTER).with_suffix(".json").exists():
     CFG = json.load(open(Path(ADAPTER).with_suffix(".json")))
+TEMP = float(arg("--temp", 0)) or None  # one temperature for every question type, instead of the adapter's
 LIMIT = int(arg("--limit", 0)) or None  # only the first N questions, for a quick check
 MODEL = arg("--model", CFG.get("model", "Qwen/Qwen3-4B-Base"))
 OUT = Path("runs") / f"od_{Path(ADAPTER).stem if ADAPTER else MODEL.split('/')[-1]}.jsonl"
@@ -52,7 +54,7 @@ with open(OUT, "w") as f:
         item = from_jev(row["state"], row["question"], row["expected"])
         ids = [o.split(":")[0] for o in item.options]
         z = np.array(answer_logits(model, *encode(tok, item)), dtype=np.float64)
-        z = z / CFG.get("temp_by_type", {}).get(row["question"]["type"], CFG["temp"])
+        z = z / (TEMP or CFG.get("temp_by_type", {}).get(row["question"]["type"], CFG["temp"]))
         p = np.exp(z - z.max())
         f.write(json.dumps({"id": row["id"], "probs": to_probs(row, ids, p / p.sum())}) + "\n")
         if i % 200 == 0:
