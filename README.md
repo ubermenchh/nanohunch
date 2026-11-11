@@ -23,6 +23,91 @@ with every number, what worked and what did not. The adapter is at
 - **Still far from the leaderboard:** the OD leaderboard lists 4B fine-tunes at 67.7 (Jeff-1.0-Qwen-4B) and 77.1 (Wald-4B v2.0). We are 10 to 20 points behind.
   Our remaining errors are concentrated in the hard tier (50% accuracy at 73% confidence).
 
+## Try it: use the model from Hugging Face
+
+The adapter is on Hugging Face in two formats: PEFT (`adapter_model.safetensors`, for transformers + peft) and MLX (`adapter.npz`, for this repo's code).
+
+### Option 1: transformers + peft (no MLX, no clone)
+
+Needs `pip install torch transformers peft`. The first run downloads Qwen3-4B-Instruct-2507 (about 8 GB) and the adapter (132 MB). The PEFT file was converted
+from the MLX one with [to_peft.py](to_peft.py) and checked against it on 40 benchmark questions: the same top answer on 40 of 40, probabilities within 0.022.
+
+```python
+import torch
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+BASE, ADAPTER = "Qwen/Qwen3-4B-Instruct-2507", "ubermenchh/nanohunch-decider-4b"
+tok = AutoTokenizer.from_pretrained(BASE)
+model = PeftModel.from_pretrained(AutoModelForCausalLM.from_pretrained(BASE, dtype=torch.bfloat16), ADAPTER).eval()
+
+
+def ask(state, question, options):
+    letters = "ABCDEFGH"
+    prompt = "\n".join([state, "", f"Question: {question}", *[f"{letters[i]}. {o}" for i, o in enumerate(options)], "Answer:"])
+    ids = tok(prompt, return_tensors="pt").input_ids
+    labels = [tok.encode(f" {letters[i]}")[0] for i in range(len(options))]
+    with torch.no_grad():
+        logits = model(ids).logits[0, -1, labels].float()
+    return dict(zip(options, torch.softmax(logits, -1).tolist()))
+
+
+# options are written "name: description"; a yes/no question has the two options "true: ..." and "false: ...";
+# a score question has levels "0: ...", "1: ...", lowest first
+state = "Customer: my parcel arrived broken and I want my money back today."
+print(ask(state, "What does the customer want?", ["refund: money back", "replacement: a new parcel", "info: just asking something"]))
+print(ask(state, "Should this ticket be escalated to a human agent?", ["true: The proposition is true.", "false: The proposition is false."]))
+```
+
+Options are written `name: description`. A yes/no question has the two options `true: ...` and `false: ...`; a score question has levels `0: ...`, `1: ...`, lowest first.
+Output: `refund 0.962, replacement 0.021, info 0.017`, then `true 0.593, false 0.407`. Use the logits as they are (temperature 1). The snippet ran on a CPU.
+
+### Option 2: this repo (MLX)
+
+It needs an Apple Silicon Mac (it ran on a 24 GB Mac; the model needs about 8 GB) or a Linux machine with `mlx[cuda12]`. It reads the typed question format directly, so you do not write the option text yourself.
+
+```bash
+git clone https://github.com/ubermenchh/nanohunch && cd nanohunch
+uv sync
+uv run python ask.py        # runs three example questions
+```
+
+Example output (probabilities per answer; for yes/no, `true` is "yes"; for score, the keys are the levels 0, 1, 2, ...):
+
+```
+{'chitchat': 0.013, 'extraction_json': 0.978, 'data_analysis': 0.009}
+{'true': 0.594, 'false': 0.406}
+{'0': 0.367, '1': 0.538, '2': 0.045, '3': 0.036, '4': 0.014}
+```
+
+**Ask your own question.** [ask.py](ask.py) loads the adapter once and exposes `ask(state, question)`. Open it, edit the examples at the bottom, or
+`from ask import ask` in your own script (importing it loads the model). A question is a dict with one of three types:
+
+```python
+state = "Customer: my parcel arrived broken and I want my money back today."
+
+# choice: pick one named option
+ask(state, {"type": "choice", "instructions": "What does the customer want?",
+            "criteria": {"refund": "money back", "replacement": "a new parcel", "info": "just asking something"}})
+
+# noul: a yes/no question (criteria can be None, or {"true": "...", "false": "..."} to describe each answer)
+ask(state, {"type": "noul", "instructions": "Should this ticket be escalated to a human agent?"})
+
+# score: levels from lowest to highest, 2 to 10 of them
+ask(state, {"type": "score", "instructions": "How urgent is this?", "criteria": ["not urgent", "somewhat", "urgent", "critical"]})
+```
+
+- `state` can be text, or a JSON-like dict or list (it is written out as JSON).
+- Up to 8 options per question. Probabilities are for the options in the order you give them; answers can shift a little when you reorder
+  them (the "flip rate" in Appendix A), so reorder and average if you need a steadier number.
+- The model reads the answer once, at the last token, so it is fast (one forward pass) and has no text output or explanation.
+- The temperatures in `config.json` are all 1 on purpose (see [the soft-target section](#the-details-behind-the-two-solid-results)).
+- To see what the adapter adds, comment out the `model.load_weights(...)` line in `ask.py` to get the plain Instruct model, and compare.
+- To score a whole file of questions the way the benchmark does, use `od.py` (see [Reproduce](#reproduce)).
+
+Treat it as a research artifact: 57.1 on OpenDecisions is above the untrained base model but far below the leaderboard, and it is weakest on hard,
+trap-style questions (see [Where the remaining error is](#where-the-remaining-error-is)).
+
 ## Results
 
 Capability on OpenDecisions. "Seeds" are training seeds; the mean and std are over those seeds. The last column compares with the
@@ -148,6 +233,8 @@ Nothing is trained on OD and no temperature is fitted on it.
 | `eval.py` | Pooling over option orders, accuracy, flip rate, ECE, temperature fit |
 | `run.py` | Phase 1: the public-data experiment in `# %%` cells |
 | `run_decider.py` | Phase 2: train on decider's teacher questions (`--soft`, `--hard`, `--rules`) plus public replay |
+| `ask.py` | Ask the adapter from Hugging Face a typed question (a runnable example) |
+| `to_peft.py` | Convert an adapter from MLX `.npz` to PEFT format |
 | `od.py` | Score a model or adapter on OpenDecisions (`--temp 1` to ignore the fitted temperatures) |
 | `refit_temp.py`, `retemp.py` | Fit one temperature per question type on hard held-out questions; rescale saved predictions offline |
 | `make_rules.py` | Generate rule-conditioned questions with decider's generator |
